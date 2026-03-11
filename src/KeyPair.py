@@ -1,0 +1,81 @@
+import base64
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization
+
+class KeyPair:
+    def __init__(self):
+        self.private_key = None
+        self.public_key = None
+
+    def _validate(self, private_key, public_key):
+        """Validates that the public key corresponds to the private key."""
+        # Derived public key from the private key
+        derived_pub = private_key.public_key()
+        
+        # Compare raw bytes
+        raw_provided = public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        raw_derived = derived_pub.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        
+        if raw_provided != raw_derived:
+            raise ValueError("Key-pair mismatch: Public key does not belong to Private key.")
+        return True
+
+    def generate_key_pair(self):
+        """Generates a new valid Ed25519 key pair."""
+        priv = ed25519.Ed25519PrivateKey.generate()
+        pub = priv.public_key()
+        
+        # Assign to attributes
+        self.private_key = priv
+        self.public_key = pub
+
+    def get_private_str(self):
+        """Returns the private key as a PEM-encoded string."""
+        if not self.private_key:
+            return None
+        return self.private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+
+    def get_public_str(self):
+        """Returns the public key as a PEM-encoded string."""
+        if not self.public_key:
+            return None
+        return self.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('utf-8')
+
+    def serialize(self):
+        """Returns a dictionary of the key strings for storage."""
+        return {
+            "private": self.get_private_str(),
+            "public": self.get_public_str()
+        }
+
+    def deserialize(self, key_data):
+        """Loads, validates, and sets the keys from a dictionary."""
+        try:
+            temp_priv = serialization.load_pem_private_key(
+                key_data["private"].encode('utf-8'),
+                password=None
+            )
+            temp_pub = serialization.load_pem_public_key(
+                key_data["public"].encode('utf-8')
+            )
+            
+            # Validate before committing to self attributes
+            if self._validate(temp_priv, temp_pub):
+                self.private_key = temp_priv
+                self.public_key = temp_pub
+                
+        except Exception as e:
+            raise ValueError(f"Failed to deserialize or validate keys: {e}")
