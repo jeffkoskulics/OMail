@@ -1,5 +1,5 @@
 import pytest
-from your_module import KeyPair  # Replace with your actual filename
+from KeyPair import KeyPair
 
 def test_key_generation():
     ok = KeyPair()
@@ -36,3 +36,10 @@ def test_mismatched_key_validation():
     
     with pytest.raises(ValueError, match="Key-pair mismatch"):
         ok1.deserialize(bad_data)
+
+def test_uninitialized_keys_return_none():
+    ok = KeyPair()
+    # This will force execution of those 'if not self.key' lines
+    assert ok.get_private_str() is None
+    assert ok.get_public_str() is None
+    assert ok.serialize() == {"private": None, "public": None}
