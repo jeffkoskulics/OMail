@@ -4,12 +4,31 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 class KeyPair:
+    """
+    Represents an Ed25519 public/private key pair for asymmetric cryptography.
+
+    This class handles generation, serialization (PEM format), and validation
+    of the key pair.
+    """
     def __init__(self) -> None:
+        """Initializes an empty KeyPair instance."""
         self.private_key: Optional[ed25519.Ed25519PrivateKey] = None
         self.public_key: Optional[ed25519.Ed25519PublicKey] = None
 
     def _validate(self, private_key: Any, public_key: Any) -> bool:
-        """Validates that the public key corresponds to the private key."""
+        """
+        Validates that the public key corresponds to the private key.
+
+        Args:
+            private_key: The private key object.
+            public_key: The public key object.
+
+        Returns:
+            bool: True if the keys match.
+
+        Raises:
+            ValueError: If the public key does not belong to the private key.
+        """
         # Derived public key from the private key
         derived_pub = private_key.public_key()
         
@@ -28,7 +47,11 @@ class KeyPair:
         return True
 
     def generate_key_pair(self) -> None:
-        """Generates a new valid Ed25519 key pair."""
+        """
+        Generates a new valid Ed25519 key pair.
+
+        The generated keys are stored in the instance attributes.
+        """
         priv = ed25519.Ed25519PrivateKey.generate()
         pub = priv.public_key()
         
@@ -37,7 +60,12 @@ class KeyPair:
         self.public_key = pub
 
     def get_private_str(self) -> Optional[str]:
-        """Returns the private key as a PEM-encoded string."""
+        """
+        Returns the private key as a PEM-encoded string.
+
+        Returns:
+            Optional[str]: The PEM-encoded private key, or None if not set.
+        """
         if not self.private_key:
             return None
         return self.private_key.private_bytes(
@@ -47,7 +75,12 @@ class KeyPair:
         ).decode('utf-8')
 
     def get_public_str(self) -> Optional[str]:
-        """Returns the public key as a PEM-encoded string."""
+        """
+        Returns the public key as a PEM-encoded string.
+
+        Returns:
+            Optional[str]: The PEM-encoded public key, or None if not set.
+        """
         if not self.public_key:
             return None
         return self.public_key.public_bytes(
@@ -56,14 +89,27 @@ class KeyPair:
         ).decode('utf-8')
 
     def serialize(self) -> Dict[str, Optional[str]]:
-        """Returns a dictionary of the key strings for storage."""
+        """
+        Returns a dictionary of the key strings for storage.
+
+        Returns:
+            Dict[str, Optional[str]]: Dictionary with 'private' and 'public' keys.
+        """
         return {
             "private": self.get_private_str(),
             "public": self.get_public_str()
         }
 
     def deserialize(self, key_data: Dict[str, str]) -> None:
-        """Loads, validates, and sets the keys from a dictionary."""
+        """
+        Loads, validates, and sets the keys from a dictionary.
+
+        Args:
+            key_data: A dictionary containing 'private' and 'public' PEM strings.
+
+        Raises:
+            ValueError: If deserialization fails or keys do not match.
+        """
         try:
             temp_priv = serialization.load_pem_private_key(
                 key_data["private"].encode('utf-8'),
