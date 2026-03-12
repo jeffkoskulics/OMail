@@ -1,5 +1,5 @@
 import pytest
-from KeyPair import KeyPair
+from key_pair import KeyPair
 
 def test_key_generation():
     ok = KeyPair()
