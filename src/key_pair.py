@@ -1,13 +1,14 @@
 import base64
+from typing import Any, Dict, Optional
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 class KeyPair:
-    def __init__(self):
-        self.private_key = None
-        self.public_key = None
+    def __init__(self) -> None:
+        self.private_key: Optional[ed25519.Ed25519PrivateKey] = None
+        self.public_key: Optional[ed25519.Ed25519PublicKey] = None
 
-    def _validate(self, private_key, public_key):
+    def _validate(self, private_key: Any, public_key: Any) -> bool:
         """Validates that the public key corresponds to the private key."""
         # Derived public key from the private key
         derived_pub = private_key.public_key()
@@ -26,7 +27,7 @@ class KeyPair:
             raise ValueError("Key-pair mismatch: Public key does not belong to Private key.")
         return True
 
-    def generate_key_pair(self):
+    def generate_key_pair(self) -> None:
         """Generates a new valid Ed25519 key pair."""
         priv = ed25519.Ed25519PrivateKey.generate()
         pub = priv.public_key()
@@ -35,7 +36,7 @@ class KeyPair:
         self.private_key = priv
         self.public_key = pub
 
-    def get_private_str(self):
+    def get_private_str(self) -> Optional[str]:
         """Returns the private key as a PEM-encoded string."""
         if not self.private_key:
             return None
@@ -45,7 +46,7 @@ class KeyPair:
             encryption_algorithm=serialization.NoEncryption()
         ).decode('utf-8')
 
-    def get_public_str(self):
+    def get_public_str(self) -> Optional[str]:
         """Returns the public key as a PEM-encoded string."""
         if not self.public_key:
             return None
@@ -54,14 +55,14 @@ class KeyPair:
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         ).decode('utf-8')
 
-    def serialize(self):
+    def serialize(self) -> Dict[str, Optional[str]]:
         """Returns a dictionary of the key strings for storage."""
         return {
             "private": self.get_private_str(),
             "public": self.get_public_str()
         }
 
-    def deserialize(self, key_data):
+    def deserialize(self, key_data: Dict[str, str]) -> None:
         """Loads, validates, and sets the keys from a dictionary."""
         try:
             temp_priv = serialization.load_pem_private_key(
