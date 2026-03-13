@@ -10,6 +10,8 @@ import threading
 import os
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from unittest.mock import MagicMock
+from stem import ControllerError
 
 from key_pair import KeyPair
 from onion_service import OnionService
@@ -129,3 +131,36 @@ def test_onion_service_lifecycle(background_server, tor_check):
     finally:
         # 5. Stop Service
         service.stop()
+
+def test_start_without_private_key():
+    """Test that starting without a private key raises ValueError."""
+    kp = KeyPair()
+    # Do NOT generate keys, leaving private_key as None
+    
+    service = OnionService(kp, 8000)
+    
+    with pytest.raises(ValueError, match="Cannot start service: KeyPair has no private key."):
+        service.start()
+
+def test_stop_ignores_controller_errors():
+    """Test that stop() handles exceptions during service removal gracefully."""
+    kp = KeyPair()
+    kp.generate_key_pair()
+    
+    service = OnionService(kp, 8000)
+    
+    # Simulate a running state with a mock controller
+    service.service_id = "test-service-id"
+    mock_controller = MagicMock()
+    service.controller = mock_controller
+    
+    # Force an error on removal to trigger the except block
+    mock_controller.remove_ephemeral_hidden_service.side_effect = ControllerError("Simulated Tor failure")
+    
+    service.stop()
+    
+    # Verify it tried to remove, caught the error, and closed cleanly
+    mock_controller.remove_ephemeral_hidden_service.assert_called_with("test-service-id")
+    mock_controller.close.assert_called_once()
+    assert service.service_id is None
+    assert service.controller is None
