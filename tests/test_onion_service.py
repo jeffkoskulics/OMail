@@ -7,17 +7,28 @@ exposing it via Tor, and attempting to fetch data from the onion address.
 import pytest
 import requests
 import threading
+import os
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from key_pair import KeyPair
 from onion_service import OnionService
-from stem import SocketError
+
+# Load .env manually to ensure TOR_PASSWORD is set for tests
+env_path = os.path.join(os.path.dirname(__file__), '../.env')
+if os.path.exists(env_path):
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                k, v = line.split('=', 1)
+                os.environ.setdefault(k, v)
 
 # Configuration for the test
 # Ensure Tor is running and SOCKS is at 9050, Control at 9051
 TOR_CONTROL_PORT = 9051
 TOR_SOCKS_PROXY = "socks5h://127.0.0.1:9050"
+TOR_PASSWORD = os.getenv("TOR_PASSWORD")
 
 class MockRequestHandler(BaseHTTPRequestHandler):
     """Responds with a simple confirmation message."""
@@ -29,7 +40,7 @@ class MockRequestHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer:
     """Helper to run a simple HTTP server in a background thread."""
     def __init__(self):
-        self.server = HTTPServer(('localhost', 0), MockRequestHandler)
+        self.server = HTTPServer(('127.0.0.1', 0), MockRequestHandler)
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.daemon = True
@@ -75,7 +86,8 @@ def test_onion_service_lifecycle(background_server, tor_check):
         key_pair=kp, 
         target_port=background_server.port, 
         hidden_service_port=80,
-        control_port=TOR_CONTROL_PORT
+        control_port=TOR_CONTROL_PORT,
+        password=os.getenv("TOR_PASSWORD")
     )
 
     onion_address = None

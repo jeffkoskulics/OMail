@@ -6,6 +6,7 @@ using the stem library and KeyPair identities.
 """
 import base64
 from typing import Optional
+from stem import SocketError, ControllerError
 from stem.control import Controller
 from cryptography.hazmat.primitives import serialization
 from key_pair import KeyPair
@@ -23,7 +24,8 @@ class OnionService:
         key_pair: KeyPair,
         target_port: int,
         hidden_service_port: int = 80,
-        control_port: int = 9051
+        control_port: int = 9051,
+        password: Optional[str] = None
     ) -> None:
         """
         Initializes the OnionService.
@@ -33,11 +35,13 @@ class OnionService:
             target_port: The local port where the actual service is running.
             hidden_service_port: The port exposed to the Tor network (default 80).
             control_port: The Tor control port (default 9051).
+            password: The password for the Tor control port (default None).
         """
         self.key_pair = key_pair
         self.target_port = target_port
         self.hidden_service_port = hidden_service_port
         self.control_port = control_port
+        self.password = password
         self.service_id: Optional[str] = None
         self.controller: Optional[Controller] = None
 
@@ -61,12 +65,18 @@ class OnionService:
             encryption_algorithm=serialization.NoEncryption()
         )
         
+        # Tor requires the 64-byte expanded key (seed + public) for ED25519-V3
+        public_bytes = self.key_pair.private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+
         # Stem expects the key content to be Base64 encoded
-        key_content = base64.b64encode(private_bytes).decode('utf-8')
+        key_content = base64.b64encode(private_bytes + public_bytes).decode('utf-8')
 
         # Connect to Tor
         self.controller = Controller.from_port(port=self.control_port)
-        self.controller.authenticate()  # Auto-detects cookie or password auth
+        self.controller.authenticate(password=self.password)
 
         # Create the service
         # await_publication=True ensures the descriptor is uploaded before returning
@@ -86,13 +96,14 @@ class OnionService:
 
         Removes the ephemeral service from the Tor controller and closes the connection.
         """
-        if self.controller and self.service_id:
-            try:
-                self.controller.remove_ephemeral_hidden_service(self.service_id)
-            except Exception:
-                # If connection is already dead or service gone, ignore
-                pass
-            finally:
-                self.controller.close()
-                self.controller = None
-                self.service_id = None
+        if self.controller:
+            if self.service_id:
+                try:
+                    self.controller.remove_ephemeral_hidden_service(self.service_id)
+                except (ControllerError, SocketError):
+                    # If connection is already dead or service gone, ignore
+                    pass
+            
+            self.controller.close()
+            self.controller = None
+            self.service_id = None
