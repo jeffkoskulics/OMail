@@ -3,3 +3,4 @@ pytest
 stem
 requests
 PySocks
+pytest-cov
