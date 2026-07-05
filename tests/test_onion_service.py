@@ -13,8 +13,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from unittest.mock import MagicMock
 from stem import ControllerError
 
-from key_pair import KeyPair
-from onion_service import OnionService
+from omail.key_pair import KeyPair
+from omail.onion_service import OnionService
 
 # Load .env manually to ensure TOR_PASSWORD is set for tests
 env_path = os.path.join(os.path.dirname(__file__), '../.env')

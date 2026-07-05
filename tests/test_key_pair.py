@@ -1,5 +1,5 @@
 import pytest
-from key_pair import KeyPair
+from omail.key_pair import KeyPair
 
 def test_key_generation():
     ok = KeyPair()
