@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import nacl.bindings as b
-from key_pair import KeyPair
+from omail.key_pair import KeyPair
 
 def ed25519_to_x25519_pub(ed_pub: ed25519.Ed25519PublicKey) -> x25519.X25519PublicKey:
     """Converts an Ed25519 Public Key to an X25519 Public Key using birational mapping."""

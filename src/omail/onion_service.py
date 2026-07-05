@@ -9,7 +9,7 @@ from typing import Optional
 from stem import SocketError, ControllerError
 from stem.control import Controller
 from cryptography.hazmat.primitives import serialization
-from key_pair import KeyPair
+from omail.key_pair import KeyPair
 
 class OnionService:
     """

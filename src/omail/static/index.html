@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{HOST_NAME}} OMail</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-host-name="{{HOST_NAME}}" data-host-onion="{{HOST_ONION}}">
+
+  <div id="bookmark-banner" class="banner hidden">
+    <span>
+      <strong>Bookmark this portal now.</strong>
+      Onion addresses cannot be recovered or looked up — if you lose
+      <code id="banner-onion"></code>, you lose access.
+      Press <kbd>Ctrl</kbd>+<kbd>D</kbd> to save it.
+    </span>
+    <button id="bookmark-dismiss" title="I saved the bookmark">Saved it</button>
+  </div>
+
+  <header>
+    <div class="brand">
+      <span class="logo">◍</span>
+      <span id="host-title">OMail</span>
+      <span class="mode-chip" id="mode-chip">tenant</span>
+    </div>
+    <div class="session" id="session-area"></div>
+  </header>
+
+  <!-- ============ AUTH VIEW ============ -->
+  <main id="auth-view" class="hidden">
+    <section class="hero">
+      <h1>Mail without addresses,<br>identity without accounts.</h1>
+      <p>
+        This node speaks OMail: Tor-routed, Triple&nbsp;Ratchet encrypted
+        messaging with contact-specific <em>User Privacy Addresses</em>.
+        No email address, no password, no personal data — your identity
+        <strong>is</strong> your passkey.
+      </p>
+      <div class="cta">
+        <button id="btn-register" class="primary">Create identity with a passkey</button>
+        <button id="btn-login">Sign in with your passkey</button>
+      </div>
+      <p id="auth-status" class="status"></p>
+      <ul class="tenets">
+        <li><strong>Zero knowledge:</strong> your keys are encrypted with a secret that never leaves your authenticator (WebAuthn PRF).</li>
+        <li><strong>Post-quantum:</strong> every ratchet epoch mixes an ML-KEM-768 secret.</li>
+        <li><strong>Sovereign:</strong> migrate to your own onion service whenever you choose.</li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- ============ WELCOME (new user) ============ -->
+  <div id="welcome-overlay" class="overlay hidden">
+    <div class="card">
+      <h2>Your identity is live.</h2>
+      <p class="subtle">Handle <code id="welcome-handle"></code> — no name, no email, just cryptography.</p>
+      <h3>Your User Privacy Address</h3>
+      <p class="upa-box"><code id="welcome-upa"></code>
+        <button class="copy" data-copy="#welcome-upa" title="Copy UPA">⧉</button></p>
+      <div id="welcome-qr" class="qr"></div>
+      <p class="subtle">Share this UPA (or the QR code) with a contact so they can write to you.</p>
+      <div class="warn">
+        <strong>Bookmark this portal before you continue.</strong><br>
+        <code id="welcome-onion"></code> is the only door to this mailbox.
+      </div>
+      <button id="welcome-continue" class="primary">I bookmarked it — open my mailbox</button>
+    </div>
+  </div>
+
+  <!-- ============ MAILBOX ============ -->
+  <main id="mailbox-view" class="hidden">
+    <aside id="sidebar">
+      <div class="me">
+        <div class="me-handle" id="me-handle"></div>
+        <div class="me-upa"><code id="me-upa"></code>
+          <button class="copy" data-copy="#me-upa" title="Copy UPA">⧉</button></div>
+        <button id="btn-show-qr" class="ghost">Show my QR</button>
+        <button id="btn-migrate" class="ghost">⚑ Become Your Own Host</button>
+      </div>
+      <div class="contacts-head">
+        <h3>Contacts</h3>
+      </div>
+      <ul id="contact-list"></ul>
+      <form id="add-contact-form">
+        <input id="new-contact-name" placeholder="Name (local only)" autocomplete="off">
+        <input id="new-contact-upa" placeholder="Paste a UPA…" autocomplete="off" required>
+        <button type="submit">Add contact</button>
+      </form>
+    </aside>
+
+    <section id="thread">
+      <div id="thread-head"><h3 id="thread-title">Select a contact</h3>
+        <span id="thread-sub" class="subtle"></span></div>
+      <div id="messages"></div>
+      <form id="compose" class="hidden">
+        <input id="compose-input" placeholder="Write an encrypted message… (try 'ping' to the Host Node)"
+               autocomplete="off">
+        <button type="submit" class="primary">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- ============ MODALS ============ -->
+  <div id="qr-overlay" class="overlay hidden">
+    <div class="card">
+      <h3>Your UPA</h3>
+      <p class="upa-box"><code id="qr-upa"></code></p>
+      <div id="qr-code" class="qr"></div>
+      <button class="primary" id="qr-close">Close</button>
+    </div>
+  </div>
+
+  <div id="migrate-overlay" class="overlay hidden">
+    <div class="card" id="migrate-card"></div>
+  </div>
+
+  <footer>
+    <span id="footer-onion"></span> · Triple Ratchet (X25519 + ML-KEM-768) ·
+    passkey-bound · zero personal data
+  </footer>
+
+  <script src="/static/vendor.js"></script>
+  <script src="/static/crypto.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

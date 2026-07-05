@@ -1,6 +1,11 @@
+aiohttp
 cryptography
-pytest
+PyNaCl
 stem
-requests
 PySocks
+qrcode
+fido2
+kyber-py
+requests
+pytest
 pytest-cov

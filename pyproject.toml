@@ -1,7 +1,44 @@
-# pyproject.toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omail"
+version = "0.1.0"
+description = "Decentralized, privacy-first messaging over Tor with passkey-bound identities, User Privacy Addresses, and Triple Ratchet encryption."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jeff Koskulics" }]
+keywords = ["tor", "onion", "webauthn", "passkey", "triple-ratchet", "post-quantum", "email"]
+dependencies = [
+    "aiohttp>=3.9",
+    "cryptography>=41",
+    "PyNaCl>=1.5",
+    "stem>=1.8",
+    "PySocks>=1.7",
+    "qrcode>=7.4",
+    "fido2>=1.1",
+    "kyber-py>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "mkdocs"]
+
+[project.scripts]
+omail = "omail.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+omail = ["static/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-addopts = "--cov=src --cov-report=term-missing"
+addopts = "--cov=omail --cov-report=term-missing"
 filterwarnings = [
-    "ignore::DeprecationWarning:stem.*"
+    "ignore::DeprecationWarning:stem.*",
+    "ignore::DeprecationWarning:aiohttp.*",
+    "ignore:It is recommended to use web.AppKey:aiohttp.web_app.NotAppKeyWarning"
 ]
