@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 data/
 .DS_Store
-.pytest_cache/.coverage
+.pytest_cache/
+.coverage
 *.egg-info/
 node_modules/
