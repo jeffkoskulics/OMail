@@ -38,5 +38,7 @@ omail = ["static/*"]
 pythonpath = ["src"]
 addopts = "--cov=omail --cov-report=term-missing"
 filterwarnings = [
-    "ignore::DeprecationWarning:stem.*"
+    "ignore::DeprecationWarning:stem.*",
+    "ignore::DeprecationWarning:aiohttp.*",
+    "ignore:It is recommended to use web.AppKey:aiohttp.web_app.NotAppKeyWarning"
 ]

@@ -70,6 +70,13 @@ CREATE TABLE IF NOT EXISTS host_prekeys (
     used       INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_prekeys (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bundle     TEXT NOT NULL,                -- public PrekeyBundle JSON only;
+    used       INTEGER NOT NULL DEFAULT 0,   -- private halves stay in the vault
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS host_sessions (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     state   TEXT NOT NULL                    -- host-side TripleRatchet state
@@ -302,6 +309,39 @@ class Database:
         )
         self.conn.commit()
         return json.loads(row["keys"])
+
+    # -- user prekeys (public bundles; private halves live in the vault) --------
+
+    def add_user_prekey(self, user_id: int, bundle: Dict[str, Any]) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO user_prekeys (user_id, bundle, created_at) "
+            "VALUES (?, ?, ?)",
+            (user_id, json.dumps(bundle), time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def take_user_prekey(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Pops one unused prekey bundle for a user (for a peer to initiate
+        against). Returns {"prekey_id": id, "bundle": {...}} or None."""
+        row = self.conn.execute(
+            "SELECT id, bundle FROM user_prekeys WHERE user_id = ? AND used = 0 "
+            "ORDER BY id LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return None
+        self.conn.execute(
+            "UPDATE user_prekeys SET used = 1 WHERE id = ?", (row["id"],)
+        )
+        self.conn.commit()
+        return {"prekey_id": row["id"], "bundle": json.loads(row["bundle"])}
+
+    def count_user_prekeys(self, user_id: int) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) AS c FROM user_prekeys WHERE user_id = ? AND used = 0",
+            (user_id,),
+        ).fetchone()["c"]
 
     # -- host ratchet sessions -------------------------------------------------
 
