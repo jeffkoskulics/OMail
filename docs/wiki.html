@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OMail Wiki</title>
+  <style>
+    :root {
+      --bg-primary: #0f1519;
+      --bg-secondary: #1a1f2e;
+      --bg-tertiary: #252c3a;
+      --text-primary: #f5f6f8;
+      --text-secondary: #c5c8ce;
+      --text-tertiary: #8b8a84;
+      --accent: #4a8f9d;
+      --accent-light: #6ab3c9;
+      --border: #343b4a;
+      --success: #5a9e7d;
+      --caution: #d4a574;
+      --critical: #c75556;
+
+      --font-serif: Georgia, 'Times New Roman', serif;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      --font-mono: 'Monaco', 'Courier New', monospace;
+
+      --type-h1: 2rem;
+      --type-h2: 1.5rem;
+      --type-h3: 1.25rem;
+      --type-body: 1rem;
+      --type-small: 0.875rem;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-primary: #f8f9fb;
+        --bg-secondary: #f0f1f5;
+        --bg-tertiary: #e8eaef;
+        --text-primary: #1a1f2e;
+        --text-secondary: #4a4f5f;
+        --text-tertiary: #8b8a84;
+        --border: #d5d8de;
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --bg-primary: #0f1519;
+      --bg-secondary: #1a1f2e;
+      --bg-tertiary: #252c3a;
+      --text-primary: #f5f6f8;
+      --text-secondary: #c5c8ce;
+      --text-tertiary: #8b8a84;
+    }
+
+    :root[data-theme="light"] {
+      --bg-primary: #f8f9fb;
+      --bg-secondary: #f0f1f5;
+      --bg-tertiary: #e8eaef;
+      --text-primary: #1a1f2e;
+      --text-secondary: #4a4f5f;
+      --text-tertiary: #8b8a84;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.7;
+      font-size: var(--type-body);
+    }
+
+    a {
+      color: var(--accent-light);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.2s;
+    }
+
+    a:hover, a:focus {
+      border-bottom-color: var(--accent-light);
+      outline: none;
+    }
+
+    h1, h2, h3 {
+      font-family: var(--font-serif);
+      font-weight: 400;
+      line-height: 1.3;
+      margin: 1.5em 0 0.5em 0;
+      text-wrap: balance;
+    }
+
+    h1 {
+      font-size: var(--type-h1);
+      color: var(--text-primary);
+    }
+
+    h2 {
+      font-size: var(--type-h2);
+      color: var(--text-primary);
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 0.5em;
+    }
+
+    h3 {
+      font-size: var(--type-h3);
+      color: var(--accent);
+    }
+
+    p {
+      margin: 1em 0;
+      max-width: 65ch;
+      color: var(--text-secondary);
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.9em;
+      background: var(--bg-tertiary);
+      padding: 0.2em 0.4em;
+      border-radius: 3px;
+      color: var(--accent-light);
+    }
+
+    pre {
+      background: var(--bg-tertiary);
+      border-left: 4px solid var(--accent);
+      padding: 1em;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 1.5em 0;
+      font-size: var(--type-small);
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      color: var(--text-secondary);
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      grid-template-rows: 60px 1fr;
+      min-height: 100vh;
+      gap: 0;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 2rem;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-size: var(--type-h2);
+      font-family: var(--font-serif);
+      font-weight: 400;
+      color: var(--accent);
+    }
+
+    .theme-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: var(--type-small);
+      transition: all 0.2s;
+    }
+
+    .theme-toggle:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    nav {
+      grid-row: 2;
+      grid-column: 1;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      padding: 2rem 0;
+      overflow-y: auto;
+    }
+
+    .nav-section {
+      margin-bottom: 2rem;
+    }
+
+    .nav-section-title {
+      font-family: var(--font-serif);
+      font-size: var(--type-h3);
+      font-weight: 400;
+      color: var(--accent);
+      padding: 0.5rem 1.5rem;
+      margin-bottom: 0.5rem;
+      text-transform: capitalize;
+    }
+
+    .nav-items {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .nav-item {
+      padding: 0.75rem 1.5rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+      font-size: var(--type-small);
+    }
+
+    .nav-item:hover {
+      background: var(--bg-tertiary);
+      color: var(--accent-light);
+    }
+
+    .nav-item.active {
+      border-left-color: var(--accent);
+      background: var(--bg-tertiary);
+      color: var(--accent-light);
+    }
+
+    main {
+      grid-row: 2;
+      grid-column: 2;
+      padding: 3rem;
+      overflow-y: auto;
+      max-width: 900px;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    .section > h1 {
+      margin-top: 0;
+    }
+
+    .intro-box {
+      background: var(--bg-secondary);
+      border-left: 4px solid var(--accent);
+      padding: 1.5rem;
+      border-radius: 4px;
+      margin: 2rem 0;
+    }
+
+    .intro-box p {
+      margin: 0.5em 0;
+      color: var(--text-secondary);
+    }
+
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+      transition: border-color 0.2s;
+    }
+
+    .card:hover {
+      border-color: var(--accent);
+    }
+
+    .card h3 {
+      margin-top: 0;
+    }
+
+    .card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .step {
+      counter-increment: step-counter;
+      margin: 2rem 0;
+      padding-left: 3rem;
+      position: relative;
+    }
+
+    .step::before {
+      content: counter(step-counter);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 2rem;
+      height: 2rem;
+      background: var(--accent);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--bg-primary);
+      font-family: var(--font-serif);
+      font-weight: 400;
+    }
+
+    .step h3 {
+      margin-top: 0;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin: 2rem 0;
+    }
+
+    .feature-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1.5rem;
+    }
+
+    .feature-card h3 {
+      margin-top: 0;
+      margin-bottom: 0.75rem;
+    }
+
+    .feature-card p {
+      margin: 0;
+      font-size: var(--type-small);
+    }
+
+    .label {
+      display: inline-block;
+      font-size: var(--type-small);
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      padding: 0.3rem 0.7rem;
+      border-radius: 3px;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+
+    .label.success {
+      background: rgba(90, 158, 125, 0.15);
+      color: var(--success);
+    }
+
+    .label.caution {
+      background: rgba(212, 165, 116, 0.15);
+      color: var(--caution);
+    }
+
+    .toc {
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      padding: 1.5rem;
+      margin: 2rem 0;
+      border-left: 4px solid var(--accent);
+    }
+
+    .toc h4 {
+      font-family: var(--font-serif);
+      font-size: var(--type-small);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-tertiary);
+      margin: 0 0 1rem 0;
+      font-weight: 400;
+    }
+
+    .toc ul {
+      list-style: none;
+    }
+
+    .toc li {
+      margin: 0.5rem 0;
+    }
+
+    .toc a {
+      color: var(--accent-light);
+      font-size: var(--type-small);
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        grid-template-columns: 1fr;
+      }
+
+      nav {
+        display: none;
+      }
+
+      nav.mobile-open {
+        display: block;
+        position: fixed;
+        left: 0;
+        top: 60px;
+        z-index: 100;
+        width: 100%;
+        background: var(--bg-secondary);
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+
+      main {
+        padding: 2rem 1.5rem;
+      }
+
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">OMail Wiki</div>
+      <button class="theme-toggle" id="theme-toggle">Light</button>
+    </header>
+
+    <nav id="nav">
+      <div class="nav-section">
+        <div class="nav-section-title">For Users</div>
+        <div class="nav-items">
+          <div class="nav-item active" data-section="user-intro">Introduction</div>
+          <div class="nav-item" data-section="user-getting-started">Getting Started</div>
+          <div class="nav-item" data-section="user-addresses">Privacy Addresses</div>
+          <div class="nav-item" data-section="user-contacts">Managing Contacts</div>
+          <div class="nav-item" data-section="user-messaging">Sending Messages</div>
+          <div class="nav-item" data-section="user-sovereignty">Your Own Host</div>
+          <div class="nav-item" data-section="user-faq">FAQ</div>
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">For Developers</div>
+        <div class="nav-items">
+          <div class="nav-item" data-section="dev-intro">Overview</div>
+          <div class="nav-item" data-section="dev-setup">Setup</div>
+          <div class="nav-item" data-section="dev-architecture">Architecture</div>
+          <div class="nav-item" data-section="dev-triple-ratchet">Triple Ratchet</div>
+          <div class="nav-item" data-section="dev-webauthn">WebAuthn & PRF</div>
+          <div class="nav-item" data-section="dev-api">API Endpoints</div>
+          <div class="nav-item" data-section="dev-testing">Testing</div>
+          <div class="nav-item" data-section="dev-contributing">Contributing</div>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <!-- USER SECTIONS -->
+
+      <section id="user-intro" class="section active">
+        <h1>Welcome to OMail</h1>
+        <div class="intro-box">
+          <p><strong>OMail is a messaging system built for privacy.</strong> There's no email address to remember, no password to reset, and no personal data to collect. Your identity is protected by cryptography, your messages are encrypted end-to-end, and you control where your mailbox lives.</p>
+        </div>
+
+        <h2>Why OMail?</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3>No Accounts</h3>
+            <p>Create an identity with just a passkey. No email address, no password, no recovery questions.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Private by Default</h3>
+            <p>Messages are encrypted end-to-end. Only you and your contact can read them — not even OMail can.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Quantum-Safe</h3>
+            <p>Uses advanced cryptography that resists both today's computers and tomorrow's quantum computers.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Sovereign</h3>
+            <p>Start on a public node, then migrate to your own private server whenever you want. It's your choice.</p>
+          </div>
+        </div>
+
+        <h2>How It Works</h2>
+        <p>OMail replaces email with a completely different model:</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Your identity is a cryptographic key (a long random number).</li>
+          <li style="margin: 0.5rem 0;">Instead of an email address, you share a <strong>User Privacy Address</strong> — a code unique to each contact.</li>
+          <li style="margin: 0.5rem 0;">Messages travel through Tor, encrypted so nobody can read them in transit.</li>
+          <li style="margin: 0.5rem 0;">The server can't see your messages, your keys, or who's talking to whom.</li>
+        </ul>
+      </section>
+
+      <section id="user-getting-started" class="section">
+        <h1>Getting Started</h1>
+
+        <h2>Installation</h2>
+        <p>OMail runs on macOS, Linux, and Windows. You need Python 3.11 or later and Tor.</p>
+
+        <div class="step">
+          <h3>Install OMail</h3>
+          <pre><code>pip install -e .</code></pre>
+        </div>
+
+        <div class="step">
+          <h3>Start the Portal</h3>
+          <p>For development (without Tor):</p>
+          <pre><code>omail --no-tor --host-name "My Node"</code></pre>
+          <p>With Tor (requires running Tor daemon):</p>
+          <pre><code>omail --host-name "My Sovereign Node"</code></pre>
+        </div>
+
+        <div class="step">
+          <h3>Open in Browser</h3>
+          <p>For <code>--no-tor</code>, visit <strong>http://127.0.0.1:8000</strong> in your browser.</p>
+          <p>With Tor, the terminal prints your .onion address. Open it in <strong>Tor Browser</strong>.</p>
+        </div>
+
+        <div class="step">
+          <h3>Create Your Identity</h3>
+          <p>Click <strong>"Create identity with a passkey"</strong> and use your device's biometric or security key.</p>
+          <p class="label success">Your identity is now live</p>
+        </div>
+
+        <h2>Your First Message</h2>
+        <p>Every OMail node has a built-in <strong>Host Node</strong> contact — it's like a talking clock that echoes your messages back. Try it:</p>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Open the mailbox and select "Host Node" in the contacts list.</li>
+          <li style="margin: 0.5rem 0;">Type <code>ping</code> and hit Send.</li>
+          <li style="margin: 0.5rem 0;">You'll get <code>pong</code> back instantly — encrypted end-to-end.</li>
+        </ol>
+      </section>
+
+      <section id="user-addresses" class="section">
+        <h1>User Privacy Addresses</h1>
+
+        <p>Email addresses are memorable but terrible for privacy — they're tied to your identity, can be harvested for spam, and expose your server to traffic analysis. OMail uses <strong>User Privacy Addresses (UPAs)</strong> instead.</p>
+
+        <h2>What's a UPA?</h2>
+        <p>A UPA looks like this:</p>
+        <pre><code>3g4yxk5j2z8w9p1a4m7n2x9l5b6v3q8k.onion/7f2h9j4k6l1m3n8p2q5r7s9t2u4v6w8x</code></pre>
+        <p>It's a pair of cryptographic codes separated by a slash:</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><strong>Before the slash:</strong> Your mailbox location (which server hosts it).</li>
+          <li style="margin: 0.5rem 0;"><strong>After the slash:</strong> Your unique identity on that server.</li>
+        </ul>
+
+        <h2>Why They Matter</h2>
+        <div class="card">
+          <h3>Each contact gets a different address</h3>
+          <p>If you share your UPA with Alice and Bob, they each see a different code after the slash. Nobody can tell they're talking to the same person.</p>
+        </div>
+        <div class="card">
+          <h3>Impossible to enumerate</h3>
+          <p>Spammers can't scrape a list of valid addresses from a server. Every UPA is completely random.</p>
+        </div>
+        <div class="card">
+          <h3>No typos ruin delivery</h3>
+          <p>Each UPA includes a checksum. If you mistype even one character, the system rejects it before it goes anywhere.</p>
+        </div>
+
+        <h2>Sharing Your UPA</h2>
+        <p>You can share your UPA (or a QR code of it) with a contact in three ways:</p>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Copy-paste the text code (long but foolproof).</li>
+          <li style="margin: 0.5rem 0;">Scan a QR code with your phone (fast, but out-of-band).</li>
+          <li style="margin: 0.5rem 0;">Share an HTTPS link if you publish your UPA on your website.</li>
+        </ol>
+        <p class="label caution">Once shared, a UPA is tied to that contact. Keep different UPAs for different people.</p>
+      </section>
+
+      <section id="user-contacts" class="section">
+        <h1>Managing Contacts</h1>
+
+        <h2>Add a Contact</h2>
+        <p>Click the <strong>+ Add contact</strong> button in the sidebar and paste their UPA. Give them a name (for your records only).</p>
+        <p>That's it — no verification, no servers checking that they exist. If the UPA is valid, OMail accepts it.</p>
+
+        <h2>Start Messaging</h2>
+        <p>Click their name to open the thread. Type your message and hit Send. The message is encrypted before it leaves your device.</p>
+
+        <h2>Delete a Contact</h2>
+        <p>Click the <strong>×</strong> next to their name. Their message history on <em>your</em> device is deleted. They can still message you (but you won't see it unless you re-add them).</p>
+
+        <h2>Message History</h2>
+        <p>Messages are stored on your device in your encrypted vault. When you receive a message, you can archive it (move it to permanent encrypted storage) or delete it (gone forever).</p>
+        <p class="label success">Your message history never leaves your device unless you export it</p>
+      </section>
+
+      <section id="user-messaging" class="section">
+        <h1>Sending and Receiving Messages</h1>
+
+        <h2>Encryption Happens Automatically</h2>
+        <p>Every message you send is encrypted with cryptographic keys that only you and the recipient have. OMail handles this in the background — you just type and send.</p>
+
+        <h2>Message Routing</h2>
+        <p>When you send a message to a contact on another OMail node:</p>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Your message is encrypted.</li>
+          <li style="margin: 0.5rem 0;">It travels through Tor to their node (nobody sees the sender or receiver).</li>
+          <li style="margin: 0.5rem 0;">Their node stores it encrypted. Their node can't read it.</li>
+          <li style="margin: 0.5rem 0;">When they come online, they download and decrypt it.</li>
+        </ol>
+
+        <h2>Typing Indicators & Delivery Status</h2>
+        <p class="label caution">OMail does not support typing indicators or read receipts. Why? Because they leak metadata — someone watching the server can tell you're composing a message even if the message is encrypted.</p>
+        <p>Messages either arrive (and you decrypt them) or they don't. You'll see the message in your thread when the recipient receives and decrypts it (if they choose to send confirmation).</p>
+
+        <h2>Offline Messages</h2>
+        <p>If your recipient is offline, the message waits on the server encrypted. When they come online and fetch it, they decrypt and archive it. Old messages are periodically cleaned up.</p>
+      </section>
+
+      <section id="user-sovereignty" class="section">
+        <h1>Become Your Own Host</h1>
+
+        <h2>Why Self-Host?</h2>
+        <p>By default, your mailbox lives on a shared public node. This is convenient, but:</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">The node operator could shut down or disappear.</li>
+          <li style="margin: 0.5rem 0;">You're dependent on their infrastructure.</li>
+          <li style="margin: 0.5rem 0;">You lose full control over your identity.</li>
+        </ul>
+        <p>OMail lets you run your own private node — instantly, without downtime.</p>
+
+        <h2>How It Works</h2>
+        <p>Click <strong>⚑ Become Your Own Host</strong> in the mailbox sidebar. OMail will:</p>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Generate a new independent server identity (cryptographic key).</li>
+          <li style="margin: 0.5rem 0;">Start a Tor hidden service pointing to your device.</li>
+          <li style="margin: 0.5rem 0;">Rewrite your UPA routing — messages now point to your server, not the public node.</li>
+          <li style="margin: 0.5rem 0;">Print the new routing table on your terminal.</li>
+        </ol>
+
+        <h2>Before You Migrate</h2>
+        <p class="label caution">Your device must stay running to receive messages. If you turn off the server, new messages can't be delivered. Consider using a always-on computer (like a Raspberry Pi or cloud VM) instead of a laptop.</p>
+
+        <h2>After Migration</h2>
+        <p>You'll need to share your new UPA with contacts. The old UPA still works if the public node is still hosting it (you can ask them to forward), but the authoritative address is the new one.</p>
+        <p class="label success">Your mailbox is now 100% under your control. No operator can shut it down.</p>
+      </section>
+
+      <section id="user-faq" class="section">
+        <h1>Frequently Asked Questions</h1>
+
+        <div class="card">
+          <h3>Can OMail read my messages?</h3>
+          <p>No. Messages are encrypted before they leave your device. OMail (the software and anyone running it) can never see the content.</p>
+        </div>
+
+        <div class="card">
+          <h3>What if I lose my passkey?</h3>
+          <p>Your passkey is your identity. If you lose it (phone broken, security key lost), you can't recover your messages or identity. Back up your passkey securely (your device usually offers this via iCloud Keychain or Google Password Manager).</p>
+        </div>
+
+        <div class="card">
+          <h3>How do I verify someone's identity?</h3>
+          <p>OMail doesn't verify that a UPA belongs to Alice or Bob. You have to verify out-of-band (call them, video chat, meet in person) and confirm they gave you the right UPA.</p>
+        </div>
+
+        <div class="card">
+          <h3>Can someone impersonate me?</h3>
+          <p>No. Your messages are cryptographically signed with your private key. Recipients can prove you sent them.</p>
+        </div>
+
+        <div class="card">
+          <h3>Is my UPA visible to other users on my node?</h3>
+          <p>No. Each UPA is contact-specific. Even if someone else is on the same node, they can't see your address or your messages.</p>
+        </div>
+
+        <div class="card">
+          <h3>Can I use OMail on multiple devices?</h3>
+          <p>Your identity lives in your passkey. If your passkey is synced across devices (iCloud, Google), you can use OMail on each device. Each device maintains its own message archive.</p>
+        </div>
+
+        <div class="card">
+          <h3>What if I get spammed?</h3>
+          <p>Block the contact. Since each contact has a different UPA, you can selectively allow/deny without affecting others. You can also migrate to your own node if you want total control.</p>
+        </div>
+      </section>
+
+      <!-- DEVELOPER SECTIONS -->
+
+      <section id="dev-intro" class="section">
+        <h1>OMail Developer Guide</h1>
+        <div class="intro-box">
+          <p><strong>OMail is a decentralized messaging protocol implemented as a Python/JavaScript stack.</strong> This guide covers architecture, cryptographic foundations, development setup, testing, and contributing.</p>
+        </div>
+
+        <h2>What You'll Build With</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3>Python 3.11+</h3>
+            <p>async backend (aiohttp), crypto (pyca/cryptography), database (SQLite), Tor control (stem).</p>
+          </div>
+          <div class="feature-card">
+            <h3>JavaScript/Node</h3>
+            <p>Browser client, crypto interop, E2E tests with Playwright. tweetnacl + noble + ed2curve.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Cryptography</h3>
+            <p>Triple Ratchet (DH + symmetric + KEM), PQXDH handshake, ML-KEM-768, Ed25519, X25519.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Tor Network</h3>
+            <p>Onion service provisioning via stem, hidden service routing, .onion addressing.</p>
+          </div>
+        </div>
+
+        <h2>Code Layout</h2>
+        <pre><code>src/omail/
+  cli.py              # Entry point, Tor bootstrap, QR display
+  server.py           # aiohttp portal & API
+  host.py             # Host node identity, prekey bundles
+  db.py               # SQLite schema
+  upa.py              # User Privacy Address encoding/parsing
+  webauthn.py         # FIDO2 ceremonies with PRF
+  key_pair.py         # Ed25519 key management
+  migration.py        # Tenant → sovereign promotion
+  onion_service.py    # Tor hidden service provisioning
+  crypto/
+    triple_ratchet.py # DH + KEM + symmetric ratchet
+    kem.py            # ML-KEM-768 and X25519-KEM
+    convert.py        # Ed25519 ↔ X25519 mapping
+  static/
+    crypto.js         # JS Triple Ratchet (wire-identical)
+    app.js            # Browser portal client
+    vendor.js         # Bundled crypto libraries
+
+tests/                # 30+ tests, JS interop validation
+scripts/browser_e2e.js # Playwright E2E with virtual CTAP2</code></pre>
+      </section>
+
+      <section id="dev-setup" class="section">
+        <h1>Development Setup</h1>
+
+        <h2>Prerequisites</h2>
+        <p>On macOS/Linux:</p>
+        <pre><code>brew install python@3.11 tor node</code></pre>
+
+        <h2>Clone and Install</h2>
+        <pre><code>git clone https://github.com/jeffkoskulics/omail.git
+cd omail
+pip install -e .</code></pre>
+        <p class="label caution">If stem build fails: <code>SETUPTOOLS_USE_DISTUTILS=stdlib pip install stem</code></p>
+
+        <h2>Verify Installation</h2>
+        <pre><code>omail --help
+pytest tests/ -v
+node scripts/browser_e2e.js</code></pre>
+
+        <h2>Local Development</h2>
+        <p>Run without Tor for fastest iteration:</p>
+        <pre><code>omail --no-tor --host-name "DevBox"</code></pre>
+        <p>Visit <strong>http://127.0.0.1:8000</strong> in your browser.</p>
+
+        <h2>With Tor</h2>
+        <p>Start Tor daemon in one terminal:</p>
+        <pre><code>tor --ControlPort 9051</code></pre>
+        <p>In another, run OMail:</p>
+        <pre><code>omail --host-name "My Node" --tor-password your-control-password</code></pre>
+      </section>
+
+      <section id="dev-architecture" class="section">
+        <h1>Architecture</h1>
+
+        <h2>Layers</h2>
+        <p><strong>Cryptographic Layer</strong> (omail/crypto/)</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><code>triple_ratchet.py</code>: DH ratchet (X25519), KEM ratchet (ML-KEM-768), symmetric chains (HMAC-SHA256 → AES-256-GCM).</li>
+          <li style="margin: 0.5rem 0;"><code>kem.py</code>: KEM abstraction with <code>ML_KEM_768</code> class and <code>X25519_KEM</code> fallback.</li>
+          <li style="margin: 0.5rem 0;"><code>convert.py</code>: Ed25519 → X25519 birational mapping for prekey derivation.</li>
+        </ul>
+
+        <p><strong>Addressing Layer</strong> (omail/upa.py)</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Encodes Ed25519 pubkey + SHA3-256 checksum as base32 (same format as Tor v3 onion).</li>
+          <li style="margin: 0.5rem 0;">Contact-specific UPAs derived deterministically from node key + contact identity.</li>
+          <li style="margin: 0.5rem 0;">Checksum validation prevents forged or typo'd addresses from routing.</li>
+        </ul>
+
+        <p><strong>Persistence Layer</strong> (omail/db.py)</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">SQLite schema: <code>users</code>, <code>credentials</code>, <code>vaults</code>, <code>messages</code>, <code>user_prekeys</code>, <code>host_sessions</code>.</li>
+          <li style="margin: 0.5rem 0;">Vaults and message envelopes are opaque AES-GCM ciphertext. Zero plaintext key material server-side.</li>
+          <li style="margin: 0.5rem 0;">Prekey bundles contain only public keys; private halves live in encrypted vault.</li>
+        </ul>
+
+        <p><strong>Authentication Layer</strong> (omail/webauthn.py)</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">FIDO2 registration/authentication ceremonies via <code>python-fido2</code>.</li>
+          <li style="margin: 0.5rem 0;">WebAuthn <strong>PRF extension</strong>: vault key is derived inside authenticator, never leaves device.</li>
+          <li style="margin: 0.5rem 0;">Fallback to device-local key (with UI warning) when authenticator lacks PRF.</li>
+        </ul>
+
+        <p><strong>Server Layer</strong> (omail/server.py)</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">aiohttp portal on 127.0.0.1:8000, accessed via Tor Hidden Service.</li>
+          <li style="margin: 0.5rem 0;">Routes: passkey ceremonies, vault ops, contact mgmt, message send/archive, WebSocket push.</li>
+          <li style="margin: 0.5rem 0;">Host-to-host ratchet replies; local blind delivery; remote federation queued.</li>
+        </ul>
+
+        <p><strong>Host Identity Layer</strong> (omail/host.py)</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Manages node's Ed25519 key (doubles as Tor onion identity and messaging identity).</li>
+          <li style="margin: 0.5rem 0;">Publishes prekey bundles; responds to handshakes; receives encrypted envelopes.</li>
+          <li style="margin: 0.5rem 0;">Deterministic Host Node responder: <code>ping</code> → <code>pong</code>, etc.</li>
+        </ul>
+
+        <h2>Message Flow</h2>
+        <pre><code>Alice (Tor Browser)
+  ├─ registration (passkey + PRF)
+  ├─ vault encrypt (PRF key via WebAuthn)
+  ├─ POST /api/contacts → Bob's UPA
+  ├─ GET /api/prekeys/{bob_upa} → Bob's bundle
+  ├─ JS Triple Ratchet.initiate(bob_bundle)
+  ├─ POST /api/messages → encrypted envelope
+  ├─ server.route_envelope(bob_upa)
+  └─ WebSocket /notify push to Bob
+
+Bob (Tor Browser)
+  ├─ WebSocket notified of envelope
+  ├─ GET /api/messages → encrypted envelope
+  ├─ JS Triple Ratchet.decrypt(envelope)
+  ├─ POST /api/messages/{id}/archive → upload vault blob
+  └─ DELETE /api/messages/{id} (plaintext destroyed)</code></pre>
+
+        <h2>Sovereignty Migration</h2>
+        <p>When user clicks "Become Your Own Host":</p>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><code>POST /api/migrate</code> → generates new Ed25519 key.</li>
+          <li style="margin: 0.5rem 0;">stem provisions new Tor hidden service → publishes to node.</li>
+          <li style="margin: 0.5rem 0;">UPA rewritten: <code>old-host.onion/key</code> → <code>new-host.onion/key</code>.</li>
+          <li style="margin: 0.5rem 0;">Node config flipped to Host Mode; terminal prints routing table.</li>
+        </ol>
+      </section>
+
+      <section id="dev-triple-ratchet" class="section">
+        <h1>Triple Ratchet Protocol</h1>
+
+        <h2>Overview</h2>
+        <p>OMail's encryption combines Signal's Double Ratchet with a third <strong>KEM ratchet</strong> that mixes a post-quantum shared secret (ML-KEM-768) into every epoch. The result is forward secrecy and post-compromise security against both classical <em>and</em> quantum adversaries.</p>
+
+        <h2>Three Ratchets</h2>
+        <p><strong>1. DH Ratchet (X25519)</strong></p>
+        <p>Every epoch, a fresh Diffie-Hellman exchange generates new root and chain keys:</p>
+        <pre><code>DH_new = X25519(my_ephemeral, their_ephemeral)
+root_key_new = HKDF(root_key_old, DH_new, salt="dh")</code></pre>
+
+        <p><strong>2. KEM Ratchet (ML-KEM-768)</strong></p>
+        <p>Every epoch, a fresh ML-KEM ciphertext encapsulates a shared secret and mixes it into the root:</p>
+        <pre><code>kem_ct, kem_ss = ML_KEM_768.encaps(their_kem_pubkey)
+root_key_new = HKDF(root_key_new, kem_ss, salt="kem")</code></pre>
+
+        <p><strong>3. Symmetric-Key Ratchet (HMAC-SHA256 chains)</strong></p>
+        <p>For each message, a symmetric chain derives one-time AES-256-GCM keys:</p>
+        <pre><code>chain_key_new = HMAC_SHA256(chain_key, 0x01)
+msg_key = HMAC_SHA256(chain_key, 0x02)
+ciphertext = AES_256_GCM(msg_key, plaintext, associated_data=header)</code></pre>
+
+        <h2>PQXDH Handshake</h2>
+        <p>Sessions begin with a hybrid handshake against a signed prekey bundle:</p>
+        <pre><code>1. X25519(my_eph, their_eph)
+2. X25519(my_eph, their_signed_prekey)
+3. X25519(my_identity, their_signed_prekey)
+4. ML_KEM_768.encaps(their_kem_pubkey)
+↓
+All mixed through HKDF → root_key, chain_key</code></pre>
+        <p>This provides deniability, forward secrecy, and post-quantum security on day one.</p>
+
+        <h2>Out-of-Order Delivery</h2>
+        <p>Messages may arrive out of order. Skipped message keys are banked:</p>
+        <pre><code>if msg_num > next_msg_num:
+  bank[msg_num] = HMAC_SHA256(chain_key, 0x02)  # derive now, decrypt later
+  chain_key = HMAC_SHA256(chain_key, 0x01)  # advance</code></pre>
+        <p>Prevents replay; old keys are rotated out.</p>
+
+        <h2>State Serialization</h2>
+        <p>Ratchet state (root key, chain keys, KEM state) serializes to JSON for storage in encrypted vault:</p>
+        <pre><code>{
+  "root_key": "base64...",
+  "chain_key_send": "base64...",
+  "chain_key_recv": "base64...",
+  "dh_send": {"private": "base64...", "public": "base64..."},
+  "dh_recv_public": "base64...",
+  "kem_alg": "ML-KEM-768",
+  "kem_send_keypair": {...},
+  "kem_recv_pubkey": "base64...",
+  "skipped_keys": {"epoch_num": {"msg_num": "base64..."}}
+}</code></pre>
+      </section>
+
+      <section id="dev-webauthn" class="section">
+        <h1>WebAuthn & PRF Extension</h1>
+
+        <h2>Why WebAuthn?</h2>
+        <p>OMail has no passwords. Authentication is pure cryptography: you prove possession of a private key via FIDO2.</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Phishing-proof: the browser verifies the Relying Party ID, not you.</li>
+          <li style="margin: 0.5rem 0;">Hardware-backed on security keys; biometric on modern devices.</li>
+          <li style="margin: 0.5rem 0;">No password recovery flow = no recovery email = zero personal data.</li>
+        </ul>
+
+        <h2>The PRF Extension</h2>
+        <p>The <strong>WebAuthn PRF extension</strong (defined in W3C WebAuthn Level 3) allows a secret to be derived <em>inside the authenticator</em>, never exposed to the browser or server:</p>
+        <pre><code>registration:
+  ├─ user creates credential (biometric/key tap)
+  ├─ authenticator derives PRF(credential, salt) → 32-byte secret
+  └─ secret stays in authenticator
+
+authentication:
+  ├─ user taps biometric/key
+  ├─ authenticator evaluates PRF(credential, salt) → same 32-byte secret
+  └─ returns secret to browser (only after successful auth)</code></pre>
+
+        <h2>Vault Encryption</h2>
+        <p>The PRF secret is used to encrypt the user's private keys and ratchet state:</p>
+        <pre><code>vault_key = PRF_output (32 bytes)
+vault_ciphertext = AES_256_GCM(vault_key, {ed25519_key, x25519_keys, ratchet_state})</code></pre>
+        <p>The vault blob is uploaded to the server as opaque ciphertext. The server stores it but can never read it — even if compromised, the vault key remains secret inside the authenticator.</p>
+
+        <h2>Fallback (Non-PRF Authenticators)</h2>
+        <p>Some authenticators don't support PRF. OMail falls back to a device-local key:</p>
+        <pre><code>if PRF_available:
+  vault_key = PRF(credential, salt)  # never leaves authenticator
+else:
+  vault_key = crypto.getRandomValues(32)  # generated locally, never uploaded
+  warn user: "PRF unavailable; vault key stored on this device"</code></pre>
+
+        <h2>Implementation (omail/webauthn.py)</h2>
+        <pre><code>def begin_registration(user_id: bytes) → RegistrationOptions:
+  # Return challenge + PRF extension request
+
+def complete_registration(response: AuthenticatorAttestationResponse) → Credential:
+  # Verify attestation, extract credential_id + cose_key
+
+def begin_authentication() → AssertionOptions:
+  # Return challenge + PRF extension request
+
+def complete_authentication(response: AuthenticatorAssertionResponse) → bool:
+  # Verify signature, extract PRF output (if available)</code></pre>
+
+        <p>The browser-side flow (omail/static/app.js) handles UI prompts and stores the vault blob.</p>
+      </section>
+
+      <section id="dev-api" class="section">
+        <h1>API Endpoints</h1>
+
+        <h2>Authentication</h2>
+        <pre><code>POST /api/webauthn/register/begin
+  → { challenge, user_id, rp_id, attestation, extensions }
+
+POST /api/webauthn/register/complete
+  ← { id, response }
+  → { credential_id, user_handle }
+
+POST /api/webauthn/authenticate/begin
+  → { challenge, allow_credentials }
+
+POST /api/webauthn/authenticate/complete
+  ← { id, response }
+  → { user_handle, prf_output }</code></pre>
+
+        <h2>Vault</h2>
+        <pre><code>GET /api/vault
+  → { vault_blob }  # encrypted AES-GCM ciphertext
+
+POST /api/vault
+  ← { vault_blob }
+  → 200 OK</code></pre>
+
+        <h2>Contacts</h2>
+        <pre><code>GET /api/contacts
+  → [{ upa, name }]
+
+POST /api/contacts
+  ← { upa, name }
+  → 201 Created
+
+DELETE /api/contacts/{upa}
+  → 204 No Content</code></pre>
+
+        <h2>Prekey Bundles</h2>
+        <pre><code>GET /api/prekeys/{target_upa}
+  → { bundle }  # signed public bundle for handshake
+
+POST /api/prekeys
+  ← { bundle }
+  → 201 Created</code></pre>
+
+        <h2>Messages</h2>
+        <pre><code>GET /api/messages
+  → [{ id, envelope }]  # pending encrypted envelopes
+
+POST /api/messages
+  ← { target_upa, envelope }
+  → { id }
+
+POST /api/messages/{id}/archive
+  ← { vault_blob }  # archive encrypted with vault_key
+  → 200 OK
+
+DELETE /api/messages/{id}
+  → 204 No Content</code></pre>
+
+        <h2>Migration</h2>
+        <pre><code>POST /api/migrate
+  → { new_onion, new_upa, routing_table }</code></pre>
+
+        <h2>WebSocket</h2>
+        <pre><code>WS /socket
+  ← { type: "notify", message_id }  # new envelope arrived
+  ← { type: "pong" }  # keepalive</code></pre>
+      </section>
+
+      <section id="dev-testing" class="section">
+        <h1>Testing</h1>
+
+        <h2>Python Test Suite</h2>
+        <p>Run all tests:</p>
+        <pre><code>pytest tests/</code></pre>
+        <p>Coverage includes:</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><code>test_triple_ratchet.py</code>: 20+ tests of DH/KEM/symmetric ratcheting, epochs, out-of-order delivery, state serialization.</li>
+          <li style="margin: 0.5rem 0;"><code>test_server.py</code>: 14 end-to-end API tests with software authenticator, passkey ceremonies, multi-user chat.</li>
+          <li style="margin: 0.5rem 0;"><code>test_js_interop.py</code>: JS ↔ Python Triple Ratchet interop (driven by Node.js).</li>
+        </ul>
+
+        <h2>Browser E2E Test</h2>
+        <p>Playwright test with virtual CTAP2 authenticator (ES256, PRF support):</p>
+        <pre><code>node scripts/browser_e2e.js</code></pre>
+        <p>Validates:</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Portal loads; registration with passkey; UPA display.</li>
+          <li style="margin: 0.5rem 0;">Host Node ping/pong; encrypted end-to-end.</li>
+          <li style="margin: 0.5rem 0;">Session reload and login.</li>
+          <li style="margin: 0.5rem 0;">Message archive and migration flow.</li>
+        </ul>
+
+        <h2>JavaScript Interop</h2>
+        <p>Byte-identical wire format verified by:</p>
+        <pre><code>pytest tests/test_js_interop.py -v</code></pre>
+        <p>Flow:</p>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Python Bob publishes prekey bundle.</li>
+          <li style="margin: 0.5rem 0;">JS Alice initiates and sends two messages.</li>
+          <li style="margin: 0.5rem 0;">Python Bob decrypts both.</li>
+          <li style="margin: 0.5rem 0;">Bob replies; Alice receives and decrypts.</li>
+          <li style="margin: 0.5rem 0;">Both sides survive state serialization and epoch transitions.</li>
+        </ol>
+
+        <h2>Running on macOS</h2>
+        <p>If E2E tests fail with Chromium path issues:</p>
+        <pre><code>export CHROMIUM_PATH="/opt/homebrew/bin/chromium"  # M1/M2
+# OR
+export CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"</code></pre>
+      </section>
+
+      <section id="dev-contributing" class="section">
+        <h1>Contributing</h1>
+
+        <h2>Before You Start</h2>
+        <p>Open an issue or discussion to scope the change. OMail is early-stage; we want to make sure contributions align with the vision.</p>
+
+        <h2>Development Workflow</h2>
+        <div class="step">
+          <h3>Fork & branch</h3>
+          <pre><code>git clone https://github.com/your-fork/omail
+git checkout -b feature/your-feature</code></pre>
+        </div>
+
+        <div class="step">
+          <h3>Make changes</h3>
+          <p>Write code, add tests. Follow PEP 8; run:</p>
+          <pre><code>pytest tests/
+node scripts/browser_e2e.js</code></pre>
+        </div>
+
+        <div class="step">
+          <h3>Commit with clear messages</h3>
+          <pre><code>git commit -m "Add X feature / Fix Y bug"</code></pre>
+        </div>
+
+        <div class="step">
+          <h3>Push and open a PR</h3>
+          <pre><code>git push origin feature/your-feature</code></pre>
+          <p>Reference any related issues.</p>
+        </div>
+
+        <h2>Code Style</h2>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><strong>Python:</strong> PEP 8, type hints, async/await.</li>
+          <li style="margin: 0.5rem 0;"><strong>JavaScript:</strong> ES6+, no bundler overhead (vendor.js is pre-bundled).</li>
+          <li style="margin: 0.5rem 0;"><strong>Cryptography:</strong> Always use established libraries (pyca/cryptography, kyber-py, tweetnacl). No custom crypto.</li>
+          <li style="margin: 0.5rem 0;"><strong>Testing:</strong> Every new feature needs tests (Python + E2E if it touches the portal).</li>
+        </ul>
+
+        <h2>Areas for Contribution</h2>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><strong>Federation:</strong> Host-to-host message routing (currently scaffolded as `queued-remote`).</li>
+          <li style="margin: 0.5rem 0;"><strong>UI/UX:</strong> Portal design, accessibility, mobile responsiveness.</li>
+          <li style="margin: 0.5rem 0;"><strong>Performance:</strong> Database indexing, message batching, crypto optimization.</li>
+          <li style="margin: 0.5rem 0;"><strong>Documentation:</strong> API docs, deployment guides, security audits.</li>
+          <li style="margin: 0.5rem 0;"><strong>Clients:</strong> Desktop (Electron), mobile (React Native), CLI tooling.</li>
+        </ul>
+
+        <h2>Security Concerns</h2>
+        <p class="label caution">If you discover a security vulnerability, please email security@omail.dev instead of opening a public issue.</p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const nav = document.getElementById('nav');
+    const navItems = document.querySelectorAll('.nav-item');
+    const sections = document.querySelectorAll('.section');
+    const themeToggle = document.getElementById('theme-toggle');
+
+    let currentTheme = 'dark';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+
+    themeToggle.textContent = currentTheme === 'dark' ? 'Light' : 'Dark';
+    themeToggle.addEventListener('click', () => {
+      currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', currentTheme);
+      themeToggle.textContent = currentTheme === 'dark' ? 'Light' : 'Dark';
+    });
+
+    navItems.forEach(item => {
+      item.addEventListener('click', () => {
+        const targetSection = item.getAttribute('data-section');
+
+        navItems.forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+
+        sections.forEach(s => s.classList.remove('active'));
+        document.getElementById(targetSection)?.classList.add('active');
+
+        if (window.innerWidth <= 768) {
+          nav.classList.remove('mobile-open');
+        }
+
+        window.scrollTo(0, 0);
+      });
+    });
+
+    if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+      currentTheme = 'light';
+      document.documentElement.setAttribute('data-theme', currentTheme);
+      themeToggle.textContent = 'Dark';
+    }
+  </script>
+</body>
+</html>
