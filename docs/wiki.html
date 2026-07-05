@@ -438,13 +438,22 @@
 
     <nav id="nav">
       <div class="nav-section">
+        <div class="nav-section-title">Architecture</div>
+        <div class="nav-items">
+          <div class="nav-item active" data-section="arch-overview">Overview</div>
+          <div class="nav-item" data-section="arch-upa">User Privacy Addresses</div>
+          <div class="nav-item" data-section="arch-ratchet">Triple Ratchet</div>
+          <div class="nav-item" data-section="arch-zero-knowledge">Zero-Knowledge Hosting</div>
+          <div class="nav-item" data-section="arch-message-flow">Message Flow</div>
+          <div class="nav-item" data-section="arch-runtime">Runtime & CLI</div>
+        </div>
+      </div>
+
+      <div class="nav-section">
         <div class="nav-section-title">For Users</div>
         <div class="nav-items">
-          <div class="nav-item active" data-section="user-intro">Introduction</div>
+          <div class="nav-item" data-section="user-intro">Introduction</div>
           <div class="nav-item" data-section="user-getting-started">Getting Started</div>
-          <div class="nav-item" data-section="user-addresses">Privacy Addresses</div>
-          <div class="nav-item" data-section="user-contacts">Managing Contacts</div>
-          <div class="nav-item" data-section="user-messaging">Sending Messages</div>
           <div class="nav-item" data-section="user-sovereignty">Your Own Host</div>
           <div class="nav-item" data-section="user-faq">FAQ</div>
         </div>
@@ -455,10 +464,6 @@
         <div class="nav-items">
           <div class="nav-item" data-section="dev-intro">Overview</div>
           <div class="nav-item" data-section="dev-setup">Setup</div>
-          <div class="nav-item" data-section="dev-architecture">Architecture</div>
-          <div class="nav-item" data-section="dev-triple-ratchet">Triple Ratchet</div>
-          <div class="nav-item" data-section="dev-webauthn">WebAuthn & PRF</div>
-          <div class="nav-item" data-section="dev-api">API Endpoints</div>
           <div class="nav-item" data-section="dev-testing">Testing</div>
           <div class="nav-item" data-section="dev-contributing">Contributing</div>
         </div>
@@ -466,9 +471,214 @@
     </nav>
 
     <main>
+      <!-- ARCHITECTURE SECTIONS -->
+
+      <section id="arch-overview" class="section active">
+        <h1>OMail System Architecture</h1>
+        <div class="intro-box">
+          <p><strong>OMail is a decentralized, privacy-first communication protocol</strong> designed to replace legacy SMTP/IMAP infrastructure. It eliminates static addressing, metadata exposure, and centralized plaintext relays by integrating Tor Onion Services, hybrid post-quantum cryptography, and hardware-backed WebAuthn mechanisms.</p>
+        </div>
+
+        <h2>Core Principles</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3>Cryptographic Addressing</h3>
+            <p>User Privacy Addresses (UPAs) are contact-specific, enabling one identity to have different addresses for each recipient.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Transport Anonymity</h3>
+            <p>All traffic routes through Tor Hidden Services. The host's onion key doubles as the messaging identity.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Zero-Knowledge Hosting</h3>
+            <p>Servers store only opaque ciphertext. Private keys and messages are encrypted end-to-end; servers never see plaintext.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Post-Quantum Encryption</h3>
+            <p>Triple Ratchet combines X25519 DH ratchet, ML-KEM-768 KEM ratchet, and symmetric chains for security against quantum computers.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Hardware-Backed Auth</h3>
+            <p>WebAuthn passkeys with PRF extension: vault keys are derived inside the authenticator, never reaching the server.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Dynamic Sovereignty</h3>
+            <p>Every tenant can migrate to a self-hosted node at any time, becoming their own mail server with a new onion identity.</p>
+          </div>
+        </div>
+
+        <h2>Quick Navigation</h2>
+        <p>Dive into specific topics:</p>
+        <a href="#" class="doc-link" onclick="navigate('arch-upa'); return false;">
+          <strong>User Privacy Addresses</strong><br/>
+          <small>How UPAs work, checksummed encoding, contact-specific addresses</small>
+        </a>
+        <a href="#" class="doc-link" onclick="navigate('arch-ratchet'); return false;">
+          <strong>Triple Ratchet Protocol</strong><br/>
+          <small>DH ratchet, KEM ratchet, symmetric chains, PQXDH handshake, out-of-order delivery</small>
+        </a>
+        <a href="#" class="doc-link" onclick="navigate('arch-zero-knowledge'); return false;">
+          <strong>Zero-Knowledge Hosting</strong><br/>
+          <small>Database schema, WebAuthn PRF, vault encryption, message routing</small>
+        </a>
+        <a href="#" class="doc-link" onclick="navigate('arch-message-flow'); return false;">
+          <strong>Message Flow & Routing</strong><br/>
+          <small>Step-by-step message encryption, server routing modes, federation</small>
+        </a>
+        <a href="#" class="doc-link" onclick="navigate('arch-runtime'); return false;">
+          <strong>Runtime & CLI</strong><br/>
+          <small>Deployment, Tor integration, hidden service provisioning</small>
+        </a>
+
+        <h2>Full Documentation</h2>
+        <p>Detailed markdown documentation is available in the <code>docs/</code> directory:</p>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;"><code>docs/upa.md</code> — User Privacy Addresses in detail</li>
+          <li style="margin: 0.5rem 0;"><code>docs/triple-ratchet.md</code> — Triple Ratchet protocol specification</li>
+          <li style="margin: 0.5rem 0;"><code>docs/zero-knowledge-hosting.md</code> — Zero-knowledge database and encryption</li>
+          <li style="margin: 0.5rem 0;"><code>docs/message-flow.md</code> — Complete message routing and delivery</li>
+          <li style="margin: 0.5rem 0;"><code>docs/self-hosting.md</code> — Migration to sovereign nodes</li>
+          <li style="margin: 0.5rem 0;"><code>docs/runtime.md</code> — CLI and deployment</li>
+        </ul>
+      </section>
+
+      <section id="arch-upa" class="section">
+        <h1>User Privacy Addresses (UPAs)</h1>
+        <p>A UPA is a cryptographic identifier in the format <code>&lt;host-onion-address&gt;.onion/&lt;user-address&gt;</code>.</p>
+        <p>Both halves encode an Ed25519 public key with SHA3-256 checksum as base32, making them contact-specific, non-enumerable, and checksum-verified against typos and forgery.</p>
+
+        <h2>Key Concepts</h2>
+        <div class="card">
+          <h3>Contact-Specific Addresses</h3>
+          <p>The same person gets a different UPA for each contact. Observers cannot tell they're the same person by comparing addresses across contacts.</p>
+        </div>
+        <div class="card">
+          <h3>No Enumeration</h3>
+          <p>Every valid UPA is cryptographically random (one of 2^256 possibilities). Attackers cannot scrape directories, brute-force valid addresses, or harvest UPAs for spam.</p>
+        </div>
+        <div class="card">
+          <h3>Checksum Verification</h3>
+          <p>Includes SHA3-256 checksum. Mistyped or forged addresses are rejected before any routing happens.</p>
+        </div>
+
+        <p style="margin-top: 2rem;">
+          <strong>📖 Read more:</strong> <a href="upa.md" target="_blank">docs/upa.md</a>
+        </p>
+      </section>
+
+      <section id="arch-ratchet" class="section">
+        <h1>The Triple Ratchet Protocol</h1>
+        <p>OMail's encryption combines Signal's Double Ratchet with a third KEM ratchet that mixes ML-KEM-768 into every epoch, providing forward secrecy and post-compromise security against both classical and quantum adversaries.</p>
+
+        <h2>Three Ratcheting Mechanisms</h2>
+        <div class="card">
+          <h3>DH Ratchet (X25519)</h3>
+          <p>Every epoch, a fresh Diffie-Hellman exchange generates new root and chain keys, providing forward secrecy.</p>
+        </div>
+        <div class="card">
+          <h3>KEM Ratchet (ML-KEM-768)</h3>
+          <p>Every epoch, a fresh ML-KEM ciphertext encapsulates a shared secret (FIPS 203 approved) and mixes it into the root key, providing post-quantum security from day one.</p>
+        </div>
+        <div class="card">
+          <h3>Symmetric-Key Ratchet (HMAC-SHA256)</h3>
+          <p>For each message, a symmetric chain derives one-time AES-256-GCM keys. Headers are authenticated as associated data.</p>
+        </div>
+
+        <h2>PQXDH Handshake</h2>
+        <p>Sessions begin with a hybrid handshake combining 3× X25519 exchanges and 1× ML-KEM encapsulation, all mixed through HKDF, providing deniability, forward secrecy, and post-quantum security from the start.</p>
+
+        <p style="margin-top: 2rem;">
+          <strong>📖 Read more:</strong> <a href="triple-ratchet.md" target="_blank">docs/triple-ratchet.md</a>
+        </p>
+      </section>
+
+      <section id="arch-zero-knowledge" class="section">
+        <h1>Zero-Knowledge Hosting</h1>
+        <p>OMail is designed so the server can never read your messages or keys — even if completely compromised.</p>
+
+        <h2>What the Server Stores</h2>
+        <table style="width: 100%; margin: 1.5rem 0; border-collapse: collapse;">
+          <tr style="border-bottom: 1px solid var(--border);">
+            <th style="text-align: left; padding: 0.75rem; color: var(--accent);">Table</th>
+            <th style="text-align: left; padding: 0.75rem; color: var(--accent);">Encrypted?</th>
+            <th style="text-align: left; padding: 0.75rem; color: var(--accent);">Server Readable?</th>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.75rem;"><code>vaults</code></td>
+            <td style="padding: 0.75rem;">Yes (AES-256-GCM)</td>
+            <td style="padding: 0.75rem;">No</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.75rem;"><code>messages</code></td>
+            <td style="padding: 0.75rem;">Yes (encrypted envelopes)</td>
+            <td style="padding: 0.75rem;">No</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.75rem;"><code>users, credentials, user_prekeys</code></td>
+            <td style="padding: 0.75rem;">No (public keys only)</td>
+            <td style="padding: 0.75rem;">No (can't derive private keys)</td>
+          </tr>
+        </table>
+
+        <h2>WebAuthn PRF Extension</h2>
+        <p>The vault key is derived inside your authenticator — it never reaches the server or browser. Even if the server is hacked and all tables are stolen, the attacker has no way to derive the PRF output.</p>
+
+        <p style="margin-top: 2rem;">
+          <strong>📖 Read more:</strong> <a href="zero-knowledge-hosting.md" target="_blank">docs/zero-knowledge-hosting.md</a>
+        </p>
+      </section>
+
+      <section id="arch-message-flow" class="section">
+        <h1>Message Flow and Routing</h1>
+        <p>Messages flow through three routing modes: host-to-self (deterministic response), local blind delivery (same host), and remote federation (between hosts).</p>
+
+        <h2>High-Level Flow</h2>
+        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Alice fetches Bob's prekey bundle</li>
+          <li style="margin: 0.5rem 0;">Alice's browser initiates Triple Ratchet session</li>
+          <li style="margin: 0.5rem 0;">Alice encrypts message and sends opaque envelope to server</li>
+          <li style="margin: 0.5rem 0;">Server routes envelope blindly (never opens it)</li>
+          <li style="margin: 0.5rem 0;">Bob's browser downloads, decrypts, and archives the message</li>
+          <li style="margin: 0.5rem 0;">Server deletes plaintext envelope</li>
+        </ol>
+
+        <p>The server never sees plaintext. It only sees opaque ciphertexts and routing requests.</p>
+
+        <p style="margin-top: 2rem;">
+          <strong>📖 Read more:</strong> <a href="message-flow.md" target="_blank">docs/message-flow.md</a>
+        </p>
+      </section>
+
+      <section id="arch-runtime" class="section">
+        <h1>Runtime and CLI</h1>
+        <p>OMail is invoked via the <code>omail</code> console script, which boots the portal, provisions Tor hidden services, and displays live status.</p>
+
+        <h2>Usage Examples</h2>
+        <p><strong>Local development:</strong></p>
+        <pre><code>omail --no-tor --host-name "DevBox"</code></pre>
+
+        <p><strong>With Tor:</strong></p>
+        <pre><code>omail --host-name "Harbor Light"</code></pre>
+
+        <p><strong>After migration to self-hosting:</strong></p>
+        <pre><code>omail --host-name "My Sovereign Node"</code></pre>
+
+        <h2>Features</h2>
+        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
+          <li style="margin: 0.5rem 0;">Automatic Tor hidden service provisioning and key persistence</li>
+          <li style="margin: 0.5rem 0;">Live status display with ASCII QR code</li>
+          <li style="margin: 0.5rem 0;">Graceful shutdown (Ctrl+C)</li>
+          <li style="margin: 0.5rem 0;">Health check endpoint</li>
+        </ul>
+
+        <p style="margin-top: 2rem;">
+          <strong>📖 Read more:</strong> <a href="runtime.md" target="_blank">docs/runtime.md</a>
+        </p>
+      </section>
+
       <!-- USER SECTIONS -->
 
-      <section id="user-intro" class="section active">
+      <section id="user-intro" class="section">
         <h1>Welcome to OMail</h1>
         <div class="intro-box">
           <p><strong>OMail is a messaging system built for privacy.</strong> There's no email address to remember, no password to reset, and no personal data to collect. Your identity is protected by cryptography, your messages are encrypted end-to-end, and you control where your mailbox lives.</p>
@@ -493,15 +703,6 @@
             <p>Start on a public node, then migrate to your own private server whenever you want. It's your choice.</p>
           </div>
         </div>
-
-        <h2>How It Works</h2>
-        <p>OMail replaces email with a completely different model:</p>
-        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;">Your identity is a cryptographic key (a long random number).</li>
-          <li style="margin: 0.5rem 0;">Instead of an email address, you share a <strong>User Privacy Address</strong> — a code unique to each contact.</li>
-          <li style="margin: 0.5rem 0;">Messages travel through Tor, encrypted so nobody can read them in transit.</li>
-          <li style="margin: 0.5rem 0;">The server can't see your messages, your keys, or who's talking to whom.</li>
-        </ul>
       </section>
 
       <section id="user-getting-started" class="section">
@@ -519,137 +720,40 @@
           <h3>Start the Portal</h3>
           <p>For development (without Tor):</p>
           <pre><code>omail --no-tor --host-name "My Node"</code></pre>
-          <p>With Tor (requires running Tor daemon):</p>
-          <pre><code>omail --host-name "My Sovereign Node"</code></pre>
         </div>
 
         <div class="step">
           <h3>Open in Browser</h3>
-          <p>For <code>--no-tor</code>, visit <strong>http://127.0.0.1:8000</strong> in your browser.</p>
-          <p>With Tor, the terminal prints your .onion address. Open it in <strong>Tor Browser</strong>.</p>
+          <p>Visit <strong>http://127.0.0.1:8000</strong> in your browser.</p>
         </div>
 
         <div class="step">
           <h3>Create Your Identity</h3>
-          <p>Click <strong>"Create identity with a passkey"</strong> and use your device's biometric or security key.</p>
+          <p>Click "Create identity with a passkey" and use your device's biometric or security key.</p>
           <p class="label success">Your identity is now live</p>
         </div>
-
-        <h2>Your First Message</h2>
-        <p>Every OMail node has a built-in <strong>Host Node</strong> contact — it's like a talking clock that echoes your messages back. Try it:</p>
-        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;">Open the mailbox and select "Host Node" in the contacts list.</li>
-          <li style="margin: 0.5rem 0;">Type <code>ping</code> and hit Send.</li>
-          <li style="margin: 0.5rem 0;">You'll get <code>pong</code> back instantly — encrypted end-to-end.</li>
-        </ol>
-      </section>
-
-      <section id="user-addresses" class="section">
-        <h1>User Privacy Addresses</h1>
-
-        <p>Email addresses are memorable but terrible for privacy — they're tied to your identity, can be harvested for spam, and expose your server to traffic analysis. OMail uses <strong>User Privacy Addresses (UPAs)</strong> instead.</p>
-
-        <h2>What's a UPA?</h2>
-        <p>A UPA looks like this:</p>
-        <pre><code>3g4yxk5j2z8w9p1a4m7n2x9l5b6v3q8k.onion/7f2h9j4k6l1m3n8p2q5r7s9t2u4v6w8x</code></pre>
-        <p>It's a pair of cryptographic codes separated by a slash:</p>
-        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;"><strong>Before the slash:</strong> Your mailbox location (which server hosts it).</li>
-          <li style="margin: 0.5rem 0;"><strong>After the slash:</strong> Your unique identity on that server.</li>
-        </ul>
-
-        <h2>Why They Matter</h2>
-        <div class="card">
-          <h3>Each contact gets a different address</h3>
-          <p>If you share your UPA with Alice and Bob, they each see a different code after the slash. Nobody can tell they're talking to the same person.</p>
-        </div>
-        <div class="card">
-          <h3>Impossible to enumerate</h3>
-          <p>Spammers can't scrape a list of valid addresses from a server. Every UPA is completely random.</p>
-        </div>
-        <div class="card">
-          <h3>No typos ruin delivery</h3>
-          <p>Each UPA includes a checksum. If you mistype even one character, the system rejects it before it goes anywhere.</p>
-        </div>
-
-        <h2>Sharing Your UPA</h2>
-        <p>You can share your UPA (or a QR code of it) with a contact in three ways:</p>
-        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;">Copy-paste the text code (long but foolproof).</li>
-          <li style="margin: 0.5rem 0;">Scan a QR code with your phone (fast, but out-of-band).</li>
-          <li style="margin: 0.5rem 0;">Share an HTTPS link if you publish your UPA on your website.</li>
-        </ol>
-        <p class="label caution">Once shared, a UPA is tied to that contact. Keep different UPAs for different people.</p>
-      </section>
-
-      <section id="user-contacts" class="section">
-        <h1>Managing Contacts</h1>
-
-        <h2>Add a Contact</h2>
-        <p>Click the <strong>+ Add contact</strong> button in the sidebar and paste their UPA. Give them a name (for your records only).</p>
-        <p>That's it — no verification, no servers checking that they exist. If the UPA is valid, OMail accepts it.</p>
-
-        <h2>Start Messaging</h2>
-        <p>Click their name to open the thread. Type your message and hit Send. The message is encrypted before it leaves your device.</p>
-
-        <h2>Delete a Contact</h2>
-        <p>Click the <strong>×</strong> next to their name. Their message history on <em>your</em> device is deleted. They can still message you (but you won't see it unless you re-add them).</p>
-
-        <h2>Message History</h2>
-        <p>Messages are stored on your device in your encrypted vault. When you receive a message, you can archive it (move it to permanent encrypted storage) or delete it (gone forever).</p>
-        <p class="label success">Your message history never leaves your device unless you export it</p>
-      </section>
-
-      <section id="user-messaging" class="section">
-        <h1>Sending and Receiving Messages</h1>
-
-        <h2>Encryption Happens Automatically</h2>
-        <p>Every message you send is encrypted with cryptographic keys that only you and the recipient have. OMail handles this in the background — you just type and send.</p>
-
-        <h2>Message Routing</h2>
-        <p>When you send a message to a contact on another OMail node:</p>
-        <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;">Your message is encrypted.</li>
-          <li style="margin: 0.5rem 0;">It travels through Tor to their node (nobody sees the sender or receiver).</li>
-          <li style="margin: 0.5rem 0;">Their node stores it encrypted. Their node can't read it.</li>
-          <li style="margin: 0.5rem 0;">When they come online, they download and decrypt it.</li>
-        </ol>
-
-        <h2>Typing Indicators & Delivery Status</h2>
-        <p class="label caution">OMail does not support typing indicators or read receipts. Why? Because they leak metadata — someone watching the server can tell you're composing a message even if the message is encrypted.</p>
-        <p>Messages either arrive (and you decrypt them) or they don't. You'll see the message in your thread when the recipient receives and decrypts it (if they choose to send confirmation).</p>
-
-        <h2>Offline Messages</h2>
-        <p>If your recipient is offline, the message waits on the server encrypted. When they come online and fetch it, they decrypt and archive it. Old messages are periodically cleaned up.</p>
       </section>
 
       <section id="user-sovereignty" class="section">
         <h1>Become Your Own Host</h1>
 
         <h2>Why Self-Host?</h2>
-        <p>By default, your mailbox lives on a shared public node. This is convenient, but:</p>
-        <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;">The node operator could shut down or disappear.</li>
-          <li style="margin: 0.5rem 0;">You're dependent on their infrastructure.</li>
-          <li style="margin: 0.5rem 0;">You lose full control over your identity.</li>
-        </ul>
-        <p>OMail lets you run your own private node — instantly, without downtime.</p>
+        <p>By default, your mailbox lives on a shared public node. Self-hosting means full control over your identity and no dependency on any operator.</p>
 
         <h2>How It Works</h2>
         <p>Click <strong>⚑ Become Your Own Host</strong> in the mailbox sidebar. OMail will:</p>
         <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
-          <li style="margin: 0.5rem 0;">Generate a new independent server identity (cryptographic key).</li>
-          <li style="margin: 0.5rem 0;">Start a Tor hidden service pointing to your device.</li>
-          <li style="margin: 0.5rem 0;">Rewrite your UPA routing — messages now point to your server, not the public node.</li>
-          <li style="margin: 0.5rem 0;">Print the new routing table on your terminal.</li>
+          <li style="margin: 0.5rem 0;">Generate a new independent server identity</li>
+          <li style="margin: 0.5rem 0;">Start a Tor hidden service</li>
+          <li style="margin: 0.5rem 0;">Rewrite your UPA routing to the new server</li>
+          <li style="margin: 0.5rem 0;">Migrate all your encrypted data</li>
         </ol>
 
-        <h2>Before You Migrate</h2>
-        <p class="label caution">Your device must stay running to receive messages. If you turn off the server, new messages can't be delivered. Consider using a always-on computer (like a Raspberry Pi or cloud VM) instead of a laptop.</p>
+        <p class="label caution">Your device must stay running to receive messages. Consider using an always-on computer.</p>
 
-        <h2>After Migration</h2>
-        <p>You'll need to share your new UPA with contacts. The old UPA still works if the public node is still hosting it (you can ask them to forward), but the authoritative address is the new one.</p>
-        <p class="label success">Your mailbox is now 100% under your control. No operator can shut it down.</p>
+        <p style="margin-top: 2rem;">
+          <strong>📖 Read more:</strong> <a href="self-hosting.md" target="_blank">docs/self-hosting.md</a>
+        </p>
       </section>
 
       <section id="user-faq" class="section">
@@ -657,120 +761,70 @@
 
         <div class="card">
           <h3>Can OMail read my messages?</h3>
-          <p>No. Messages are encrypted before they leave your device. OMail (the software and anyone running it) can never see the content.</p>
+          <p>No. Messages are encrypted before they leave your device. OMail can never see the content.</p>
         </div>
 
         <div class="card">
           <h3>What if I lose my passkey?</h3>
-          <p>Your passkey is your identity. If you lose it (phone broken, security key lost), you can't recover your messages or identity. Back up your passkey securely (your device usually offers this via iCloud Keychain or Google Password Manager).</p>
+          <p>Your passkey is your identity. If you lose it, you lose access to your messages. Back up your authenticator securely.</p>
         </div>
 
         <div class="card">
           <h3>How do I verify someone's identity?</h3>
-          <p>OMail doesn't verify that a UPA belongs to Alice or Bob. You have to verify out-of-band (call them, video chat, meet in person) and confirm they gave you the right UPA.</p>
-        </div>
-
-        <div class="card">
-          <h3>Can someone impersonate me?</h3>
-          <p>No. Your messages are cryptographically signed with your private key. Recipients can prove you sent them.</p>
-        </div>
-
-        <div class="card">
-          <h3>Is my UPA visible to other users on my node?</h3>
-          <p>No. Each UPA is contact-specific. Even if someone else is on the same node, they can't see your address or your messages.</p>
+          <p>Verify out-of-band (call them, video chat, meet in person) and confirm they gave you the right UPA.</p>
         </div>
 
         <div class="card">
           <h3>Can I use OMail on multiple devices?</h3>
-          <p>Your identity lives in your passkey. If your passkey is synced across devices (iCloud, Google), you can use OMail on each device. Each device maintains its own message archive.</p>
-        </div>
-
-        <div class="card">
-          <h3>What if I get spammed?</h3>
-          <p>Block the contact. Since each contact has a different UPA, you can selectively allow/deny without affecting others. You can also migrate to your own node if you want total control.</p>
+          <p>If your passkey is synced across devices (iCloud, Google), you can use OMail on each device.</p>
         </div>
       </section>
 
       <!-- DEVELOPER SECTIONS -->
 
       <section id="dev-intro" class="section">
-        <h1>OMail Developer Guide</h1>
+        <h1>Developer Guide</h1>
         <div class="intro-box">
-          <p><strong>OMail is a decentralized messaging protocol implemented as a Python/JavaScript stack.</strong> This guide covers architecture, cryptographic foundations, development setup, testing, and contributing.</p>
+          <p><strong>OMail is a decentralized messaging protocol implemented as a Python/JavaScript stack.</strong> This guide covers architecture, development setup, testing, and contributing.</p>
         </div>
 
         <h2>What You'll Build With</h2>
         <div class="feature-grid">
           <div class="feature-card">
             <h3>Python 3.11+</h3>
-            <p>async backend (aiohttp), crypto (pyca/cryptography), database (SQLite), Tor control (stem).</p>
+            <p>Async backend (aiohttp), cryptography (pyca), database (SQLite), Tor control (stem).</p>
           </div>
           <div class="feature-card">
             <h3>JavaScript/Node</h3>
-            <p>Browser client, crypto interop, E2E tests with Playwright. tweetnacl + noble + ed2curve.</p>
+            <p>Browser client, crypto interop, E2E tests with Playwright.</p>
           </div>
           <div class="feature-card">
             <h3>Cryptography</h3>
-            <p>Triple Ratchet (DH + symmetric + KEM), PQXDH handshake, ML-KEM-768, Ed25519, X25519.</p>
+            <p>Triple Ratchet, PQXDH, ML-KEM-768, Ed25519, X25519.</p>
           </div>
           <div class="feature-card">
             <h3>Tor Network</h3>
-            <p>Onion service provisioning via stem, hidden service routing, .onion addressing.</p>
+            <p>Hidden service provisioning, onion routing.</p>
           </div>
         </div>
-
-        <h2>Code Layout</h2>
-        <pre><code>src/omail/
-  cli.py              # Entry point, Tor bootstrap, QR display
-  server.py           # aiohttp portal & API
-  host.py             # Host node identity, prekey bundles
-  db.py               # SQLite schema
-  upa.py              # User Privacy Address encoding/parsing
-  webauthn.py         # FIDO2 ceremonies with PRF
-  key_pair.py         # Ed25519 key management
-  migration.py        # Tenant → sovereign promotion
-  onion_service.py    # Tor hidden service provisioning
-  crypto/
-    triple_ratchet.py # DH + KEM + symmetric ratchet
-    kem.py            # ML-KEM-768 and X25519-KEM
-    convert.py        # Ed25519 ↔ X25519 mapping
-  static/
-    crypto.js         # JS Triple Ratchet (wire-identical)
-    app.js            # Browser portal client
-    vendor.js         # Bundled crypto libraries
-
-tests/                # 30+ tests, JS interop validation
-scripts/browser_e2e.js # Playwright E2E with virtual CTAP2</code></pre>
       </section>
 
       <section id="dev-setup" class="section">
         <h1>Development Setup</h1>
 
         <h2>Prerequisites</h2>
-        <p>On macOS/Linux:</p>
         <pre><code>brew install python@3.11 tor node</code></pre>
 
         <h2>Clone and Install</h2>
         <pre><code>git clone https://github.com/jeffkoskulics/omail.git
 cd omail
 pip install -e .</code></pre>
-        <p class="label caution">If stem build fails: <code>SETUPTOOLS_USE_DISTUTILS=stdlib pip install stem</code></p>
-
-        <h2>Verify Installation</h2>
-        <pre><code>omail --help
-pytest tests/ -v
-node scripts/browser_e2e.js</code></pre>
 
         <h2>Local Development</h2>
         <p>Run without Tor for fastest iteration:</p>
         <pre><code>omail --no-tor --host-name "DevBox"</code></pre>
-        <p>Visit <strong>http://127.0.0.1:8000</strong> in your browser.</p>
 
-        <h2>With Tor</h2>
-        <p>Start Tor daemon in one terminal:</p>
-        <pre><code>tor --ControlPort 9051</code></pre>
-        <p>In another, run OMail:</p>
-        <pre><code>omail --host-name "My Node" --tor-password your-control-password</code></pre>
+        <p>Visit <strong>http://127.0.0.1:8000</strong> in any browser.</p>
       </section>
 
       <section id="dev-architecture" class="section">
