@@ -20,7 +20,6 @@ from omail.host import HostNode
 from omail.server import create_app
 from tests.soft_authenticator import SoftAuthenticator
 
-pytest_plugins = "aiohttp.pytest_plugin"
 
 
 def _b64(data: bytes) -> str:
