@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS relationships (
     label        TEXT NOT NULL,              -- local-only name for the correspondent
     inbound_upa  TEXT NOT NULL UNIQUE,       -- slot the peer sends to (on this host)
     outbound_upa TEXT,                        -- address we send to (peer's host)
+    contact_id   INTEGER REFERENCES contacts(id) ON DELETE SET NULL,  -- display thread
     state        TEXT NOT NULL DEFAULT 'invited',  -- invited | connected
     created_at   REAL NOT NULL
 );
@@ -124,7 +125,23 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Idempotent, additive column migrations for DBs created by an
+        earlier schema version (no destructive changes)."""
+        cols = {
+            r["name"]
+            for r in self.conn.execute("PRAGMA table_info(relationships)")
+        }
+        if "contact_id" in cols:
+            return
+        # relationships predates the contact_id link (added in Phase 2)
+        self.conn.execute(
+            "ALTER TABLE relationships ADD COLUMN contact_id INTEGER "
+            "REFERENCES contacts(id) ON DELETE SET NULL"
+        )
 
     def close(self) -> None:
         self.conn.close()
@@ -325,7 +342,9 @@ class Database:
         return cur.lastrowid
 
     def take_relationship_prekey(self, relationship_id: int) -> Optional[Dict]:
-        """Claims one unused prekey bundle for a slot (marks it used)."""
+        """Claims one unused prekey bundle for a slot (marks it used).
+        Returns {"prekey_id": id, "bundle": {...}} or None, mirroring
+        take_user_prekey so the peer can name the responder key it used."""
         row = self.conn.execute(
             "SELECT id, bundle FROM relationship_prekeys "
             "WHERE relationship_id = ? AND used = 0 ORDER BY id LIMIT 1",
@@ -337,7 +356,22 @@ class Database:
             "UPDATE relationship_prekeys SET used = 1 WHERE id = ?", (row["id"],)
         )
         self.conn.commit()
-        return json.loads(row["bundle"])
+        return {"prekey_id": row["id"], "bundle": json.loads(row["bundle"])}
+
+    def set_relationship_contact(self, rel_id: int, contact_id: int) -> None:
+        self.conn.execute(
+            "UPDATE relationships SET contact_id = ? WHERE id = ?",
+            (contact_id, rel_id),
+        )
+        self.conn.commit()
+
+    def get_relationship_by_contact(
+        self, owner_id: int, contact_id: int
+    ) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM relationships WHERE owner_id = ? AND contact_id = ?",
+            (owner_id, contact_id),
+        ).fetchone()
 
     def count_relationship_prekeys(self, relationship_id: int) -> int:
         return self.conn.execute(

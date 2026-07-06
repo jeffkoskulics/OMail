@@ -103,14 +103,14 @@ def test_relationship_prekeys(db, user_id):
     rel_id = db.create_relationship(user_id, "Bob", "alice.onion/bobslotkey")
     assert db.count_relationship_prekeys(rel_id) == 0
 
-    db.add_relationship_prekey(rel_id, {"spk": "b1"})
+    id1 = db.add_relationship_prekey(rel_id, {"spk": "b1"})
     db.add_relationship_prekey(rel_id, {"spk": "b2"})
     assert db.count_relationship_prekeys(rel_id) == 2
 
     first = db.take_relationship_prekey(rel_id)
-    assert first == {"spk": "b1"}
+    assert first == {"prekey_id": id1, "bundle": {"spk": "b1"}}
     assert db.count_relationship_prekeys(rel_id) == 1
-    assert db.take_relationship_prekey(rel_id) == {"spk": "b2"}
+    assert db.take_relationship_prekey(rel_id)["bundle"] == {"spk": "b2"}
     assert db.take_relationship_prekey(rel_id) is None  # exhausted
 
 

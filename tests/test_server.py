@@ -630,3 +630,130 @@ async def test_relationship_invite_requires_bundles(client):
     # Auth is required
     resp = await client.post("/api/relationships", json={})
     assert resp.status == 401
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: per-relationship federation (same-host fast path)
+# ---------------------------------------------------------------------------
+
+def _slot_bundles(n=2):
+    """Mints a relationship slot: a seed, its public key, n public prekey
+    bundles, and the matching ResponderKeys (kept as the 'client' would keep
+    them in its vault)."""
+    seed = _seed()
+    slot_pub = ed25519.Ed25519PrivateKey.from_private_bytes(
+        seed
+    ).public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    bundles, keys = [], []
+    for _ in range(n):
+        b, k = make_prekey_bundle(seed)
+        bundles.append(b.to_dict())
+        keys.append(k)
+    return seed, slot_pub, bundles, keys
+
+
+async def test_relationship_federation_same_host(client, host):
+    """Alice and Bob, two tenants on one node, connect via the invite
+    handshake and exchange mail through per-relationship slots — the whole
+    Phase 2 flow with federation short-circuited to the same host."""
+    alice = await _new_user(client)
+    bob = await _new_user(client)
+
+    # Alice mints an invite slot for Bob and keeps its responder keys
+    a_seed, a_pub, a_bundles, a_keys = _slot_bundles()
+    resp = await client.post(
+        "/api/relationships",
+        json={"label": "Bob", "slot_pub": _b64(a_pub), "bundles": a_bundles},
+        headers=alice.headers,
+    )
+    a_rel = await resp.json()
+    invite_upa = a_rel["inbound_upa"]
+    alice_slot_keys = dict(zip(a_rel["prekey_ids"], a_keys))
+
+    # Bob accepts: mints his reverse slot and runs the connect handshake
+    b_seed, b_pub, b_bundles, b_keys = _slot_bundles()
+    resp = await client.post(
+        "/api/relationships/accept",
+        json={"invite_upa": invite_upa, "label": "Alice",
+              "slot_pub": _b64(b_pub), "bundles": b_bundles},
+        headers=bob.headers,
+    )
+    assert resp.status == 200, await resp.text()
+    b_rel = await resp.json()
+    assert b_rel["state"] == "connected"
+    assert b_rel["outbound_upa"] == invite_upa
+    bob_contact = b_rel["contact"]              # Bob's thread for Alice
+
+    # Alice's side is now connected too, with a fresh thread for Bob
+    a_rels = await (
+        await client.get("/api/relationships", headers=alice.headers)
+    ).json()
+    assert a_rels[0]["state"] == "connected"
+    assert a_rels[0]["outbound_upa"] == b_rel["inbound_upa"]
+    alice_contacts = await (
+        await client.get("/api/contacts", headers=alice.headers)
+    ).json()
+    alice_contact = next(c for c in alice_contacts if not c["is_host"])
+
+    # Bob -> Alice: fetch Alice's slot bundle, initiate, deliver
+    data = await (
+        await client.get("/api/bundle", params={"upa": invite_upa},
+                         headers=bob.headers)
+    ).json()
+    bt = TripleRatchet.initiate(b_seed, PrekeyBundle.from_dict(data["bundle"]))
+    env = bt.encrypt(b"hi alice, it's bob")
+    result = await client.post(
+        "/api/messages/send",
+        json={"contact_id": bob_contact["id"], "envelope": env,
+              "prekey_id": data["prekey_id"],
+              "archive": {"iv": "x", "ct": "x"}},
+        headers=bob.headers,
+    )
+    assert (await result.json())["delivery"] == "local"
+
+    # Alice reads and decrypts with her slot's responder key
+    msgs = await (
+        await client.get("/api/messages",
+                         params={"contact_id": alice_contact["id"]},
+                         headers=alice.headers)
+    ).json()
+    incoming = [m for m in msgs if m["direction"] == "in"]
+    assert len(incoming) == 1
+    env_in = incoming[0]["envelope"]
+    at = TripleRatchet.respond(alice_slot_keys[env_in["prekey_id"]], env_in["init"])
+    assert at.decrypt(env_in) == b"hi alice, it's bob"
+
+    # Alice -> Bob over the established session
+    reply = at.encrypt(b"hey bob, alice here")
+    result = await client.post(
+        "/api/messages/send",
+        json={"contact_id": alice_contact["id"], "envelope": reply,
+              "archive": {"iv": "x", "ct": "x"}},
+        headers=alice.headers,
+    )
+    assert (await result.json())["delivery"] == "local"
+
+    bmsgs = await (
+        await client.get("/api/messages",
+                         params={"contact_id": bob_contact["id"]},
+                         headers=bob.headers)
+    ).json()
+    b_in = [m for m in bmsgs if m["direction"] == "in"]
+    assert bt.decrypt(b_in[0]["envelope"]) == b"hey bob, alice here"
+
+
+async def test_accept_unknown_invite_fails(client, host):
+    bob = await _new_user(client)
+    _seed_, pub, bundles, _keys = _slot_bundles()
+    # A well-formed invite UPA on this host that was never minted
+    bogus = host.user_upa(b"\x07" * 32)
+    resp = await client.post(
+        "/api/relationships/accept",
+        json={"invite_upa": bogus, "label": "Ghost",
+              "slot_pub": _b64(pub), "bundles": bundles},
+        headers=bob.headers,
+    )
+    assert resp.status == 404

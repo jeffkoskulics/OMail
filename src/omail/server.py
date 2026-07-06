@@ -23,6 +23,13 @@ from aiohttp import WSMsgType, web
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from omail.db import Database
+from omail.federation import (
+    FederationClient,
+    FederationError,
+    bundle_core,
+    connect_core,
+    deliver_core,
+)
 from omail.host import HostNode
 from omail.migration import promote_to_sovereign
 from omail.upa import parse_upa
@@ -61,6 +68,13 @@ def create_app(
     app["ceremonies"] = {}
     app["ws_connections"] = {}
 
+    async def _fed_notify(user_id: int, payload: dict) -> None:
+        await _notify(app, user_id, payload)
+
+    # Sending side of federation. `remote` stays None here (same-host fast
+    # path only); Phase 2b wires the Tor transport, and tests inject one.
+    app["federation"] = FederationClient(db, host, notify=_fed_notify)
+
     # One-time migration for nodes created before the rename: existing
     # tenants keep a host contact stored under the old default label.
     from omail.host import HOST_CONTACT_NAME
@@ -86,6 +100,10 @@ def create_app(
     app.router.add_post("/api/contacts", contacts_add)
     app.router.add_get("/api/relationships", relationships_list)
     app.router.add_post("/api/relationships", relationships_create)
+    app.router.add_post("/api/relationships/accept", relationships_accept)
+    app.router.add_post("/api/federation/connect", federation_connect)
+    app.router.add_get("/api/federation/bundle", federation_bundle)
+    app.router.add_post("/api/federation/deliver", federation_deliver)
     app.router.add_get("/api/bundle", bundle_get)
     app.router.add_post("/api/prekeys", prekeys_publish)
     app.router.add_get("/api/messages", messages_list)
@@ -509,9 +527,106 @@ async def relationships_create(request: web.Request) -> web.Response:
         rel_id = db.create_relationship(user["id"], label, inbound_upa)
     except Exception:
         return _json_error(409, "That slot address is already in use")
-    for bundle in bundles:
-        db.add_relationship_prekey(rel_id, bundle)
-    return web.json_response(_relationship_json(db.get_relationship(user["id"], rel_id)))
+    prekey_ids = [db.add_relationship_prekey(rel_id, bundle) for bundle in bundles]
+    result = _relationship_json(db.get_relationship(user["id"], rel_id))
+    result["prekey_ids"] = prekey_ids
+    return web.json_response(result)
+
+
+async def relationships_accept(request: web.Request) -> web.Response:
+    """Accept an invite. The client mints a reverse slot (its own inbound
+    address for this correspondent) and posts its public key + prekey
+    bundles plus the invite it received. We create the local relationship
+    and thread, publish the reverse slot's bundles, then run the connect
+    handshake against the inviter's host so both sides are bound."""
+    user = _require_user(request)
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    fed: FederationClient = request.app["federation"]
+    body = await request.json()
+    label = (body.get("label") or "").strip() or "Contact"
+    invite_upa = (body.get("invite_upa") or "").strip().lower()
+    try:
+        parse_upa(invite_upa)
+        slot_pub = base64.b64decode(body["slot_pub"])
+        reverse_upa = host.user_upa(slot_pub)
+    except Exception as exc:
+        return _json_error(400, f"Invalid invite or slot key: {exc}")
+    bundles = body.get("bundles", [])
+    if not isinstance(bundles, list) or not bundles:
+        return _json_error(400, "Expected a non-empty 'bundles' list")
+
+    contact_id = db.add_contact(user["id"], label, invite_upa)
+    try:
+        rel_id = db.create_relationship(user["id"], label, reverse_upa)
+    except Exception:
+        return _json_error(409, "That slot address is already in use")
+    db.set_relationship_contact(rel_id, contact_id)
+    prekey_ids = [db.add_relationship_prekey(rel_id, b) for b in bundles]
+
+    try:
+        await fed.connect(invite_upa, reverse_upa)
+    except FederationError as exc:
+        return _json_error(exc.status, f"Connect handshake failed: {exc.message}")
+    db.connect_relationship(rel_id, invite_upa)
+
+    result = _relationship_json(db.get_relationship(user["id"], rel_id))
+    result["contact"] = {"id": contact_id, "name": label, "upa": invite_upa}
+    result["prekey_ids"] = prekey_ids
+    return web.json_response(result)
+
+
+# ---------------------------------------------------------------------------
+# Federation (host-to-host; capability-authorized, no session cookie)
+# ---------------------------------------------------------------------------
+
+def _fed_error(exc: FederationError) -> web.Response:
+    return web.json_response({"error": exc.message}, status=exc.status)
+
+
+async def federation_connect(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    try:
+        return web.json_response(connect_core(
+            db, host,
+            (body.get("invite_upa") or "").strip().lower(),
+            (body.get("reverse_upa") or "").strip().lower(),
+        ))
+    except FederationError as exc:
+        return _fed_error(exc)
+
+
+async def federation_bundle(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    try:
+        return web.json_response(bundle_core(
+            db, host, (request.query.get("upa") or "").strip().lower()
+        ))
+    except FederationError as exc:
+        return _fed_error(exc)
+
+
+async def federation_deliver(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    envelope = body.get("envelope")
+    if not isinstance(envelope, dict):
+        return _json_error(400, "Missing envelope")
+
+    async def notify(uid, payload):
+        await _notify(request.app, uid, payload)
+
+    try:
+        return web.json_response(await deliver_core(
+            db, host, (body.get("target_upa") or "").strip().lower(),
+            envelope, notify,
+        ))
+    except FederationError as exc:
+        return _fed_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -519,20 +634,32 @@ async def relationships_create(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 async def bundle_get(request: web.Request) -> web.Response:
-    """Fetches a one-time prekey bundle for any UPA hosted on this node."""
+    """Fetches a one-time prekey bundle for a UPA. The Administrator and
+    legacy identity UPAs resolve locally; per-relationship slots (local or
+    on another host) resolve through federation."""
     _require_user(request)
     db: Database = request.app["db"]
     host: HostNode = request.app["host"]
+    fed: FederationClient = request.app["federation"]
     upa = (request.query.get("upa") or "").strip().lower()
     if upa == host.upa:
         return web.json_response(host.publish_prekey_bundle())
+    try:
+        parse_upa(upa)
+    except ValueError:
+        return _json_error(404, "No such UPA")
     target = db.get_user_by_upa(upa)
-    if target is None:
-        return _json_error(404, "No such UPA on this host")
-    prekey = db.take_user_prekey(target["id"])
-    if prekey is None:
-        return _json_error(409, "Peer has no unused prekey bundles")
-    return web.json_response(prekey)
+    if target is not None:
+        prekey = db.take_user_prekey(target["id"])
+        if prekey is None:
+            return _json_error(409, "Peer has no unused prekey bundles")
+        return web.json_response(prekey)
+    # A per-relationship slot: same-host slots and remote slots both go
+    # through the federation client (which short-circuits same-host).
+    try:
+        return web.json_response(await fed.fetch_bundle(upa))
+    except FederationError as exc:
+        return _fed_error(exc)
 
 
 async def prekeys_publish(request: web.Request) -> web.Response:
@@ -614,7 +741,23 @@ async def messages_send(request: web.Request) -> web.Response:
         )
         return web.json_response({"id": sent_id, "delivery": "host"})
 
-    # Blind routing to another UPA
+    if body.get("prekey_id") is not None:
+        envelope = {**envelope, "prekey_id": body["prekey_id"]}
+
+    # Per-relationship slot: route to the peer's inbound address through
+    # federation (same-host short-circuits; cross-host goes over Tor).
+    rel = db.get_relationship_by_contact(user["id"], contact["id"])
+    if rel is not None and rel["outbound_upa"]:
+        fed: FederationClient = request.app["federation"]
+        try:
+            await fed.deliver(rel["outbound_upa"], envelope)
+        except FederationError as exc:
+            return _json_error(exc.status, f"Delivery failed: {exc.message}")
+        onion, _ = parse_upa(rel["outbound_upa"])
+        delivery = "local" if onion == host.onion else "federated"
+        return web.json_response({"id": sent_id, "delivery": delivery})
+
+    # Legacy blind routing to an identity UPA on this host
     try:
         contact_host_onion, _ = parse_upa(contact["upa"])
     except ValueError as exc:
@@ -626,8 +769,6 @@ async def messages_send(request: web.Request) -> web.Response:
     recipient = db.get_user_by_upa(contact["upa"])
     if recipient is None:
         return _json_error(404, "Recipient UPA not found on this host")
-    if body.get("prekey_id") is not None:
-        envelope = {**envelope, "prekey_id": body["prekey_id"]}
 
     # Find or auto-provision the sender's entry in the recipient's contacts
     sender_entry = next(
