@@ -132,6 +132,43 @@ def test_onion_service_lifecycle(background_server, tor_check):
         # 5. Stop Service
         service.stop()
 
+def test_expanded_key_yields_the_keypair_public_key():
+    """Regression: the ED25519-V3 blob sent to ADD_ONION must be the
+    64-byte expanded secret key (clamped SHA-512 of the seed). The old
+    code sent seed||public, so Tor used the raw seed as its scalar and
+    published the service at a different .onion address than the one
+    derived, printed, and embedded in every UPA."""
+    from cryptography.hazmat.primitives import serialization
+    from nacl import bindings
+
+    from omail.onion_service import _tor_expanded_private_key
+
+    kp = KeyPair()
+    kp.generate_key_pair()
+    seed = kp.private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    pub = kp.public_key.public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+
+    expanded = _tor_expanded_private_key(seed)
+    assert len(expanded) == 64
+
+    # Tor derives its service key by multiplying the base point by the
+    # first 32 bytes, exactly as-is. That must reproduce the seed's true
+    # Ed25519 public key so the published address matches ours.
+    assert bindings.crypto_scalarmult_ed25519_base_noclamp(expanded[:32]) == pub
+
+    # The old blob (raw seed as scalar) demonstrably does not.
+    assert bindings.crypto_scalarmult_ed25519_base_noclamp(seed) != pub
+
+    with pytest.raises(ValueError):
+        _tor_expanded_private_key(b"short")
+
+
 def test_start_without_private_key():
     """Test that starting without a private key raises ValueError."""
     kp = KeyPair()
