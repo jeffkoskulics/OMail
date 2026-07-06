@@ -87,6 +87,12 @@ If Charlie later stands up his own OMail host, he supplies Alice with
 then on the relationship behaves exactly like Alice ↔ Bob, and Alice's
 messages route to Charlie's host instead of waiting in webmail.
 
+In implementation terms this needs no guest-specific machinery: Charlie
+runs the ordinary self-hosting migration (`POST /api/migrate`), then mints
+`UPA-Alice-to-Charlie` the same way any tenant creates a relationship
+invite, and Alice accepts it exactly as she would from Bob. A claimed guest
+is, from that point on, indistinguishable from any other tenant.
+
 ## Why this shape
 
 - **No enumerable directory.** Because addresses are per-relationship and
