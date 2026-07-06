@@ -1,15 +1,22 @@
 """
-User Privacy Addresses (UPAs).
+User Privacy Addresses (UPAs). See docs/concepts.md for the full model.
 
-A UPA is a contact-specific cryptographic identifier with the form:
+A UPA is a *per-relationship inbound address* with the form:
 
-    <host-onion-address>.onion/<user-address>
+    <host-onion-address>.onion/<relationship-address>
 
-where <user-address> is the user's Ed25519 public key encoded exactly like
-a Tor v3 onion address (base32 of pubkey || checksum || version) but
-without the ".onion" suffix. There are no memorable, static, guessable
-addresses: possession of a UPA is the only way to route to a user, and a
-user can mint distinct identities per contact.
+where <relationship-address> is a key encoded exactly like a Tor v3 onion
+address (base32 of pubkey || checksum || version) but without the ".onion"
+suffix.
+
+A UPA always lives on the host of the party that *receives* on it, and is
+reserved for exactly one correspondent: a user mints a distinct UPA per
+relationship rather than publishing one static address. There are no
+memorable, guessable, or enumerable addresses — possession of a UPA is the
+only way to route to that relationship's inbox.
+
+This module handles the encoding/derivation/parsing of the address itself;
+the allocation of per-relationship keys lives in the host/DB layer.
 """
 import base64
 import hashlib

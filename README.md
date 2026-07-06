@@ -15,11 +15,12 @@ patched onto 1970s SMTP.
 
 ## Core tenets
 
-- **Cryptographic addressing (UPAs).** A User Privacy Address is
-  `<host>.onion/<user-address>`, where the user part is the user's Ed25519
-  public key encoded exactly like a Tor v3 onion address (56 base32 chars,
-  checksummed). No memorable static addresses, nothing to enumerate, nothing
-  to spam.
+- **Cryptographic addressing (UPAs).** A User Privacy Address is a
+  *per-relationship inbound address*, `<host>.onion/<relationship-address>`,
+  where the second half is encoded exactly like a Tor v3 onion address (56
+  base32 chars, checksummed). A user mints a distinct UPA for each
+  correspondent and it lives on the receiver's host — there is no single
+  static address to enumerate or spam. See [docs/concepts.md](docs/concepts.md).
 - **Transport & metadata anonymity.** The portal binds to `127.0.0.1` and is
   reached exclusively through a Tor Hidden Service the node provisions at
   startup. The host's onion key *is* its messaging identity.
@@ -47,7 +48,7 @@ omail --no-tor                            # local development mode
 
 The terminal prints live status and an ASCII QR code of the generated
 `.onion` portal URL. Open it in Tor Browser, create an identity with a
-passkey, and say `ping` to your auto-provisioned **Host Node** contact.
+passkey, and say `ping` to your auto-provisioned **Administrator** contact.
 
 Tor needs a control port. The recommended torrc setup is cookie auth —
 no password to manage:

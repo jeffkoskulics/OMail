@@ -870,7 +870,7 @@ pip install -e .</code></pre>
         <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
           <li style="margin: 0.5rem 0;">Manages node's Ed25519 key (doubles as Tor onion identity and messaging identity).</li>
           <li style="margin: 0.5rem 0;">Publishes prekey bundles; responds to handshakes; receives encrypted envelopes.</li>
-          <li style="margin: 0.5rem 0;">Deterministic Host Node responder: <code>ping</code> → <code>pong</code>, etc.</li>
+          <li style="margin: 0.5rem 0;">Deterministic Administrator responder: <code>ping</code> → <code>pong</code>, etc.</li>
         </ul>
 
         <h2>Message Flow</h2>
@@ -1098,7 +1098,7 @@ DELETE /api/messages/{id}
         <p>Validates:</p>
         <ul style="margin-left: 1.5rem; color: var(--text-secondary);">
           <li style="margin: 0.5rem 0;">Portal loads; registration with passkey; UPA display.</li>
-          <li style="margin: 0.5rem 0;">Host Node ping/pong; encrypted end-to-end.</li>
+          <li style="margin: 0.5rem 0;">Administrator ping/pong; encrypted end-to-end.</li>
           <li style="margin: 0.5rem 0;">Session reload and login.</li>
           <li style="margin: 0.5rem 0;">Message archive and migration flow.</li>
         </ul>

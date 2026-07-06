@@ -1,11 +1,11 @@
 # User Privacy Addresses (UPAs)
 
-OMail replaces email addresses with **User Privacy Addresses** — cryptographic identifiers that eliminate enumeration, prevent spam, and provide contact-specific anonymity.
+OMail replaces email addresses with **User Privacy Addresses** — per-relationship cryptographic identifiers that eliminate enumeration, prevent spam, and provide relationship-level anonymity. See [concepts.md](concepts.md) for the full relationship model; this page covers the address itself.
 
 ## Format
 
 ```
-<host-onion-address>.onion/<user-address>
+<host-onion-address>.onion/<relationship-address>
 ```
 
 Example:
@@ -17,10 +17,21 @@ Example:
 
 Both halves use identical encoding: `base32(pubkey || sha3-checksum || 0x03)` over an Ed25519 public key.
 
-- **Before `.onion`**: The mailbox host's onion service address (derived from host's Ed25519 key)
-- **After `/`**: The user's identity on that host (also derived from Ed25519, but contact-specific)
+- **Before `.onion`**: The host's onion service address (derived from the host's Ed25519 key).
+- **After `/`**: A **per-relationship address** — a freshly minted key that routes to one specific inbox on that host, reserved for one specific correspondent.
 
-The user part is literally "another onion address without the `.onion`" — a 56-character base32 string with checksum.
+The second half is literally "another onion address without the `.onion`" — a 56-character base32 string with checksum.
+
+## A UPA is an inbound slot
+
+A UPA always lives on the host of the party who **receives** on it. Delivering a message to a UPA drops it into that party's inbox on that party's host.
+
+We name a UPA `UPA-<holder>-to-<destination>`:
+
+- **holder** keeps the address and sends *to* it,
+- **destination** receives on it; the address lives on the destination's host.
+
+So `UPA-Bob-to-Alice` is held by Bob, routes to Alice, and lives on Alice's host. To reach Alice, Bob sends to it. The reverse direction uses a *different* UPA, `UPA-Alice-to-Bob`, which lives on Bob's host. A two-OMail-user relationship therefore has two UPAs, one inbound slot per host.
 
 ## Key Properties
 
@@ -32,76 +43,78 @@ Every UPA includes a SHA3-256 checksum embedded in the encoding. When a UPA is p
 from omail.upa import parse_upa
 
 try:
-    host, user_key = parse_upa(upa_string)
+    host_onion, relationship_key = parse_upa(upa_string)
 except ValueError:
     print("Invalid UPA (typo or forged)")
 ```
 
 Mistyped or forged addresses are rejected **before any routing happens**. This prevents accidental delivery to the wrong recipient and defends against address forgery.
 
-### Contact-Specific Addresses
+### Per-Relationship Addresses
 
-The same person gets a different UPA for each contact. If you share your UPA with Alice and Bob:
+A user mints a *distinct* UPA for every correspondent — there is no single "your address." If Alice corresponds with Bob and Charlie:
 
 ```
-Alice sees:  host.onion/alice-specific-hash
-Bob sees:    host.onion/bob-specific-hash
+Bob holds:      alice.onion/bob-specific-key      (mints on Alice's host)
+Charlie holds:  alice.onion/charlie-specific-key  (mints on Alice's host)
 ```
 
-Both hash to your key, but observers cannot tell they're the same person by comparing addresses.
+Each is a separate inbound slot on Alice's host. Bob and Charlie cannot tell they are writing to the same person by comparing the addresses Alice gave them.
 
 ### No Enumeration
 
-Every valid UPA is cryptographically random (one of 2^256 possibilities). An attacker cannot:
-- Scrape a directory of users
+Every valid UPA is cryptographically random (one of 2^256 possibilities). Because addresses are minted per-relationship on demand, there is no directory at all. An attacker cannot:
+- Scrape a list of users
 - Brute-force valid addresses
 - Harvest addresses for spam campaigns
 
-Even if they compromise the server, they get opaque hashes — not a list of contacts or identities.
+Even if they compromise the server, they get opaque per-relationship keys — not a roster of identities.
 
-## Host's Own UPA
+## Host and Administrator addresses
 
-The **host's own UPA** uses the same key for both halves:
+The **host's own identity** uses the same key for both halves:
 
 ```
 host-key.onion/host-key
 ```
 
-This is the node's master identity. The host's Ed25519 key serves triple duty:
+The host's Ed25519 key serves triple duty:
 1. Tor onion service identity
-2. Triple Ratchet session identity (for responding to messages)
-3. Cryptographic address (for receiving messages from other hosts)
+2. Triple Ratchet session identity (the administrator's messaging identity)
+3. Cryptographic address other hosts route to
+
+The auto-provisioned **Administrator** contact every tenant receives points at this address. Ordinary tenant-to-tenant correspondence uses per-relationship UPAs, not this master address.
 
 ## Sharing a UPA
 
-Users share UPAs in three ways:
+When you mint a UPA for a correspondent, you share it out-of-band:
 
-1. **Text copy-paste** — Long but foolproof
-2. **QR code** — Fast, but must be transmitted out-of-band
-3. **HTTPS link** — If published on a website
+1. **QR code** — Fast; scan it in person or over a video call.
+2. **Text copy-paste** — Long but foolproof.
+3. **HTTPS link** — If you publish an invite on a website.
 
 ## Implementation
 
-Derivation and parsing live in `omail.upa`:
+Address encoding, derivation, and parsing live in `omail.upa`:
 
 ```python
 from omail.upa import (
     encode_pubkey,       # Ed25519 → UPA half
     decode_pubkey,       # UPA half → Ed25519
-    derive_upa,          # Deterministic UPA from keys
+    derive_upa,          # Compose <host>.onion/<relationship-key>
     parse_upa,           # Parse and verify checksum
     onion_address        # Ed25519 → .onion address
 )
 ```
 
-All operations are deterministic: the same key always produces the same UPA. This allows contacts to independently verify that a UPA belongs to a specific person (out-of-band confirmation).
+The address encoding is deterministic (a given key always encodes to the same string). The *allocation* of per-relationship keys — one per correspondent — lives in the host/DB layer, not in this module.
 
 ## Contrast with Email Addresses
 
 | Aspect | Email | UPA |
 |--------|-------|-----|
-| Static? | Yes — compromises privacy | No — different per contact |
-| Enumerable? | Yes — can be harvested for spam | No — cryptographically random |
+| Static? | Yes — one address for everyone | No — a distinct address per relationship |
+| Enumerable? | Yes — can be harvested for spam | No — minted on demand, no directory |
 | Verifiable? | No — anyone can claim example@email.com | Yes — checksum prevents typos/forgery |
-| Requires central authority? | Yes — registrar + MX records | No — derived from user's key |
-| Tied to identity? | Yes — exposes personal data | No — contact-specific anonymity |
+| Requires central authority? | Yes — registrar + MX records | No — each host mints its own |
+| Tied to identity? | Yes — exposes personal data | No — relationship-level anonymity |

@@ -1,5 +1,12 @@
 # Message Flow and Routing
 
+> **Terminology and target model:** see [concepts.md](concepts.md) for the
+> canonical definitions (Host, Administrator, Tenant, Guest) and the
+> per-relationship UPA model with its two-step connect handshake. This page
+> details the message-passing and routing mechanics; where it shows a
+> single host carrying both correspondents, the same envelope path applies
+> across hosts once federation transport (Phase 2) carries it over Tor.
+
 ## Overview
 
 ```

@@ -9,17 +9,24 @@ mechanisms.
 ## User Privacy Addresses (UPAs)
 
 ```
-<host-onion-address>.onion/<user-address>
+<host-onion-address>.onion/<relationship-address>
 ```
 
 Both halves are the same encoding: `base32(pubkey || sha3-checksum || 0x03)`
-over an Ed25519 public key — the user part is literally "another onion
+over an Ed25519 public key — the second part is literally "another onion
 address without the `.onion`". Derivation and parsing live in `omail.upa`;
 checksums are verified on every parse, so mistyped or forged addresses are
 rejected before any routing happens.
 
-The **host's own UPA** uses the same key for both halves: the node's onion
-service key doubles as its Triple Ratchet identity (`omail.host.HostNode`).
+A UPA is a **per-relationship inbound address**: a user mints a distinct
+one for each correspondent, and it lives on the host of the party that
+receives on it. A two-user relationship uses two UPAs, one inbound slot per
+host. See [concepts.md](concepts.md) for the full model (Host,
+Administrator, Tenant, Guest, and the connection handshake).
+
+The **host's own identity** uses the same key for both halves: the node's
+onion service key doubles as the administrator's Triple Ratchet identity
+(`omail.host.HostNode`).
 
 ## The Triple Ratchet
 
@@ -67,10 +74,17 @@ Onboarding collects **no personal data**: no email, no password, no name.
 Tor Browser ──http over onion──► 127.0.0.1:8000 (aiohttp)
    │ passkey ceremonies (fido2)          │
    │ vault blobs (opaque)                │
-   │ ratchet envelopes ─────────────────►│── is_host? host ratchet replies
-   │                                     │── local UPA? blind delivery + WS push
-   │◄──────────── WebSocket notify ──────│── remote UPA? queued (federation TBD)
+   │ ratchet envelopes ─────────────────►│── Administrator UPA? host ratchet replies
+   │                                     │── local relationship UPA? blind delivery + WS push
+   │◄──────────── WebSocket notify ──────│── remote host UPA? federated over Tor
 ```
+
+Target model (implemented across phases; see [concepts.md](concepts.md)):
+adding a correspondent's UPA triggers a **host-to-host connect handshake**
+that exchanges the reverse inbound UPA, and remote delivery is transported
+over Tor rather than routed only within a single host. Non-OMail
+correspondents are carried as **guests** with a webmail inbox on the
+hosting node.
 
 ## Self-hosting migration
 
