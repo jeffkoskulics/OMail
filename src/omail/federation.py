@@ -51,12 +51,15 @@ def _host_of(upa: str) -> str:
 # Receiving cores (run on the host that owns the addressed slot)
 # ---------------------------------------------------------------------------
 
-def connect_core(db: Database, host: HostNode,
-                 invite_upa: str, reverse_upa: str) -> dict:
+def connect_core(db: Database, invite_upa: str, reverse_upa: str) -> dict:
     """Inviter side: the acceptor is completing the handshake. Bind the
-    reverse address to the invited relationship and mark it connected."""
-    if _host_of(invite_upa) != host.onion:
-        raise FederationError(404, "That invite is not hosted here")
+    reverse address to the invited relationship and mark it connected.
+
+    Whether invite_upa is "hosted here" is decided by the DB lookup below,
+    not by comparing onions: a node serves the shared host onion PLUS one
+    onion per sovereign tenant it hosts, all on the same process/DB, so
+    there is no single onion string to compare against.
+    """
     try:
         parse_upa(reverse_upa)
     except ValueError as exc:
@@ -78,10 +81,8 @@ def connect_core(db: Database, host: HostNode,
     return {"ok": True}
 
 
-def bundle_core(db: Database, host: HostNode, upa: str) -> dict:
+def bundle_core(db: Database, upa: str) -> dict:
     """Hand out a one-time prekey bundle for a slot that lives on this host."""
-    if _host_of(upa) != host.onion:
-        raise FederationError(404, "That address is not hosted here")
     rel = db.get_relationship_by_inbound_upa(upa)
     if rel is None:
         raise FederationError(404, "Unknown slot")
@@ -91,13 +92,10 @@ def bundle_core(db: Database, host: HostNode, upa: str) -> dict:
     return prekey
 
 
-async def deliver_core(db: Database, host: HostNode, target_upa: str,
-                       envelope: dict,
+async def deliver_core(db: Database, target_upa: str, envelope: dict,
                        notify: Optional[Callable[[int, dict], Awaitable]] = None
                        ) -> dict:
     """Route an envelope into the local inbox that owns the target slot."""
-    if _host_of(target_upa) != host.onion:
-        raise FederationError(404, "That address is not hosted here")
     rel = db.get_relationship_by_inbound_upa(target_upa)
     if rel is None:
         raise FederationError(404, "Unknown slot")
@@ -185,12 +183,15 @@ class FederationClient:
         self.remote = remote or _no_remote
 
     def _is_self(self, onion: str) -> bool:
-        return onion == self.host.onion
+        """A node serves the shared host onion PLUS one onion per sovereign
+        tenant it hosts, all on this same process/DB — so "local" means
+        either of those, not just the node's own primary identity."""
+        return onion == self.host.onion or self.db.is_sovereign_onion(onion)
 
     async def connect(self, invite_upa: str, reverse_upa: str) -> dict:
         onion = _host_of(invite_upa)
         if self._is_self(onion):
-            return connect_core(self.db, self.host, invite_upa, reverse_upa)
+            return connect_core(self.db, invite_upa, reverse_upa)
         return await self.remote(
             onion, "/api/federation/connect",
             {"invite_upa": invite_upa, "reverse_upa": reverse_upa},
@@ -199,7 +200,7 @@ class FederationClient:
     async def fetch_bundle(self, upa: str) -> dict:
         onion = _host_of(upa)
         if self._is_self(onion):
-            return bundle_core(self.db, self.host, upa)
+            return bundle_core(self.db, upa)
         return await self.remote(
             onion, "/api/federation/bundle", {"upa": upa}
         )
@@ -208,7 +209,7 @@ class FederationClient:
         onion = _host_of(target_upa)
         if self._is_self(onion):
             return await deliver_core(
-                self.db, self.host, target_upa, envelope, self.notify
+                self.db, target_upa, envelope, self.notify
             )
         return await self.remote(
             onion, "/api/federation/deliver",

@@ -236,6 +236,19 @@ class Database:
         )
         self.conn.commit()
 
+    def is_sovereign_onion(self, onion: str) -> bool:
+        """True if `onion` is a sovereign tenant's own onion on this node
+        (as opposed to the shared node onion). Used by federation to decide
+        whether an address is served locally: a node serves its own onion
+        PLUS one per sovereign tenant, all on this same process/DB."""
+        if not onion.endswith(".onion"):
+            onion += ".onion"
+        row = self.conn.execute(
+            "SELECT 1 FROM users WHERE sovereign = 1 AND upa LIKE ? LIMIT 1",
+            (onion + "/%",),
+        ).fetchone()
+        return row is not None
+
     # -- credentials --------------------------------------------------------
 
     def add_credential(

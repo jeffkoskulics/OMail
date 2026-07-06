@@ -1019,6 +1019,61 @@ async def test_guest_invite_claim_via_devicekey(client, host):
     assert resp.status == 200
 
 
+async def test_claimed_guest_can_graduate_to_sovereign(client, host):
+    """A guest's graduation path (see docs/concepts.md) reuses the existing
+    migration flow unmodified: once claimed, a guest is an ordinary tenant
+    and /api/migrate doesn't gate on the guest flag. After migrating,
+    Charlie mints an invite for Alice via the normal relationship flow so
+    she can reach his new sovereign host -- the same mechanism any peer
+    uses, not a guest-specific handshake."""
+    alice = await _new_user(client)
+    invite = await (await client.post(
+        "/api/guests", json={"label": "Charlie"}, headers=alice.headers
+    )).json()
+    identity_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    origin = f"http://{client.host}:{client.port}"
+    auth = SoftAuthenticator(client.host, origin)
+    begin = await (await client.post(
+        "/api/guests/claim/webauthn/begin",
+        json={"inbound_upa": invite["inbound_upa"]},
+    )).json()
+    credential = auth.create(begin["options"])
+    resp = await client.post(
+        "/api/guests/claim/webauthn/complete",
+        json={"ceremony": begin["ceremony"], "credential": credential,
+              "identity_pub": _b64(identity_pub)},
+    )
+    charlie_info = await resp.json()
+    charlie_headers = {"Authorization": f"Bearer {charlie_info['token']}"}
+    client.session.cookie_jar.clear()
+
+    old_upa = charlie_info["upa"]
+    resp = await client.post("/api/migrate", json={}, headers=charlie_headers)
+    assert resp.status == 200, await resp.text()
+    result = await resp.json()
+    assert result["upa"] != old_upa
+    assert result["onion"] != host.onion
+
+    me = await (await client.get("/api/me", headers=charlie_headers)).json()
+    assert me["sovereign"] is True
+    assert me["mode"] == "host"
+
+    # Now sovereign, Charlie mints an invite for Alice through the ordinary
+    # peer mechanism -- graduation needs no guest-specific handshake.
+    seed, pub, bundles, _keys = _slot_bundles()
+    resp = await client.post(
+        "/api/relationships",
+        json={"label": "Alice", "slot_pub": _b64(pub), "bundles": bundles},
+        headers=charlie_headers,
+    )
+    assert resp.status == 200, await resp.text()
+    rel = await resp.json()
+    assert rel["inbound_upa"].startswith(result["onion"] + "/")
+
+
 # ---------------------------------------------------------------------------
 # Phase 3: credentials list + multi-device linking
 # ---------------------------------------------------------------------------

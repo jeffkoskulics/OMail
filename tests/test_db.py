@@ -40,6 +40,16 @@ def test_user_lifecycle(db, user_id):
     assert updated["sovereign"] == 1
 
 
+def test_is_sovereign_onion(db, user_id):
+    # Not sovereign yet: the node's shared onion isn't a *sovereign* onion
+    assert db.is_sovereign_onion("host.onion") is False
+
+    db.update_user_upa(user_id, "myown.onion/useraddr", sovereign=True)
+    assert db.is_sovereign_onion("myown.onion") is True
+    assert db.is_sovereign_onion("myown") is True  # suffix optional
+    assert db.is_sovereign_onion("someoneelse.onion") is False
+
+
 def test_duplicate_handle_rejected(db, user_id):
     with pytest.raises(Exception):
         db.create_user("user-abc123", "other.onion/x", b"\x02" * 32)

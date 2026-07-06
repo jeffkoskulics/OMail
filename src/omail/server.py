@@ -32,7 +32,7 @@ from omail.federation import (
 )
 from omail.host import HostNode
 from omail.migration import promote_to_sovereign
-from omail.upa import parse_upa
+from omail.upa import derive_upa, parse_upa
 from omail.webauthn import PasskeyManager, new_handle
 
 SESSION_COOKIE = "omail_session"
@@ -686,6 +686,18 @@ async def contacts_add(request: web.Request) -> web.Response:
 # Relationships (per-relationship inbound slots — see docs/concepts.md)
 # ---------------------------------------------------------------------------
 
+def _user_onion(user) -> str:
+    """The onion a NEW relationship/guest slot should be minted under for
+    this user: their own sovereign onion once they've migrated, or the
+    shared node onion before that — both are already encoded in
+    user['upa'], so no separate lookup is needed. Using host.onion
+    unconditionally here would keep vending addresses under the node's
+    shared identity even after a tenant becomes sovereign, defeating the
+    point of migrating (see docs/concepts.md graduation flow)."""
+    onion, _ = parse_upa(user["upa"])
+    return onion
+
+
 def _relationship_json(row) -> dict:
     return {
         "id": row["id"],
@@ -710,12 +722,11 @@ async def relationships_create(request: web.Request) -> web.Response:
     this host and stores the bundles. Returns the UPA to share out-of-band."""
     user = _require_user(request)
     db: Database = request.app["db"]
-    host: HostNode = request.app["host"]
     body = await request.json()
     label = (body.get("label") or "").strip() or "Contact"
     try:
         slot_pub = base64.b64decode(body["slot_pub"])
-        inbound_upa = host.user_upa(slot_pub)
+        inbound_upa = derive_upa(_user_onion(user), slot_pub)
     except Exception as exc:
         return _json_error(400, f"Invalid slot key: {exc}")
     bundles = body.get("bundles", [])
@@ -739,7 +750,6 @@ async def relationships_accept(request: web.Request) -> web.Response:
     handshake against the inviter's host so both sides are bound."""
     user = _require_user(request)
     db: Database = request.app["db"]
-    host: HostNode = request.app["host"]
     fed: FederationClient = request.app["federation"]
     body = await request.json()
     label = (body.get("label") or "").strip() or "Contact"
@@ -747,7 +757,7 @@ async def relationships_accept(request: web.Request) -> web.Response:
     try:
         parse_upa(invite_upa)
         slot_pub = base64.b64decode(body["slot_pub"])
-        reverse_upa = host.user_upa(slot_pub)
+        reverse_upa = derive_upa(_user_onion(user), slot_pub)
     except Exception as exc:
         return _json_error(400, f"Invalid invite or slot key: {exc}")
     bundles = body.get("bundles", [])
@@ -798,10 +808,9 @@ async def guests_create(request: web.Request) -> web.Response:
     Ratchet identity is generated in their own browser at claim time."""
     user = _require_user(request)
     db: Database = request.app["db"]
-    host: HostNode = request.app["host"]
     body = await request.json()
     label = (body.get("label") or "").strip() or "Guest"
-    inbound_upa = host.user_upa(os.urandom(32))
+    inbound_upa = derive_upa(_user_onion(user), os.urandom(32))
     invite_id = db.create_guest_invite(user["id"], label, inbound_upa)
     return web.json_response(
         {"id": invite_id, "label": label, "inbound_upa": inbound_upa, "claimed": False}
@@ -947,11 +956,10 @@ def _fed_error(exc: FederationError) -> web.Response:
 
 async def federation_connect(request: web.Request) -> web.Response:
     db: Database = request.app["db"]
-    host: HostNode = request.app["host"]
     body = await request.json()
     try:
         return web.json_response(connect_core(
-            db, host,
+            db,
             (body.get("invite_upa") or "").strip().lower(),
             (body.get("reverse_upa") or "").strip().lower(),
         ))
@@ -961,10 +969,9 @@ async def federation_connect(request: web.Request) -> web.Response:
 
 async def federation_bundle(request: web.Request) -> web.Response:
     db: Database = request.app["db"]
-    host: HostNode = request.app["host"]
     try:
         return web.json_response(bundle_core(
-            db, host, (request.query.get("upa") or "").strip().lower()
+            db, (request.query.get("upa") or "").strip().lower()
         ))
     except FederationError as exc:
         return _fed_error(exc)
@@ -972,7 +979,6 @@ async def federation_bundle(request: web.Request) -> web.Response:
 
 async def federation_deliver(request: web.Request) -> web.Response:
     db: Database = request.app["db"]
-    host: HostNode = request.app["host"]
     body = await request.json()
     envelope = body.get("envelope")
     if not isinstance(envelope, dict):
@@ -983,7 +989,7 @@ async def federation_deliver(request: web.Request) -> web.Response:
 
     try:
         return web.json_response(await deliver_core(
-            db, host, (body.get("target_upa") or "").strip().lower(),
+            db, (body.get("target_upa") or "").strip().lower(),
             envelope, notify,
         ))
     except FederationError as exc:
