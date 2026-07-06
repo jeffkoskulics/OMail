@@ -126,16 +126,31 @@ def _start_onion(host_kp: KeyPair, args) -> OnionService:
     return service
 
 
-def _sovereign_onion_services(db: Database, args) -> list:
-    """Re-provisions hidden services for tenants promoted to sovereign."""
-    services = []
+def _sovereign_key_rows(db: Database) -> list:
+    """Collects (handle, key PEM) for tenants promoted to sovereign.
+
+    Must run on the thread that owns the SQLite connection (the event
+    loop thread) — sqlite3 objects cannot cross threads.
+    """
+    rows = []
     for user in db.list_users():
         if not user["sovereign"]:
             continue
         pem = db.get_config(f"sovereign_onion_key:{user['id']}")
-        if not pem:
-            continue
-        from cryptography.hazmat.primitives import serialization as ser
+        if pem:
+            rows.append((user["handle"], pem))
+    return rows
+
+
+def _sovereign_onion_services(rows: list, args) -> list:
+    """Re-provisions hidden services from pre-fetched (handle, PEM) rows.
+
+    Safe to run in an executor thread: touches Tor, never the database.
+    """
+    from cryptography.hazmat.primitives import serialization as ser
+
+    services = []
+    for handle, pem in rows:
         kp = KeyPair()
         kp.private_key = ser.load_pem_private_key(pem.encode(), password=None)
         kp.public_key = kp.private_key.public_key()
@@ -147,7 +162,7 @@ def _sovereign_onion_services(db: Database, args) -> list:
             password=args.tor_password,
         )
         service.start()
-        services.append((user["handle"], service))
+        services.append((handle, service))
     return services
 
 
@@ -195,17 +210,25 @@ async def serve(args) -> int:
             services.append(("host", service))
             tor_live = True
             status(f"tor hidden service  : LIVE at {host.onion}")
-            sovereign = await loop.run_in_executor(
-                None, _sovereign_onion_services, db, args
-            )
-            for handle, svc in sovereign:
-                services.append((handle, svc))
-                status(f"sovereign service   : {svc.service_id}.onion ({handle})")
         except Exception as exc:
             status(f"tor hidden service  : FAILED ({exc})")
             for hint in _tor_error_hints(exc, args.control_port):
                 status(f"  {hint}")
             status("continuing local-only; fix Tor and restart to go dark")
+        if tor_live:
+            try:
+                # SQLite reads happen here on the event-loop thread; only
+                # the stem/Tor network calls run in the executor.
+                rows = _sovereign_key_rows(db)
+                sovereign = await loop.run_in_executor(
+                    None, _sovereign_onion_services, rows, args
+                )
+                for handle, svc in sovereign:
+                    services.append((handle, svc))
+                    status(f"sovereign service   : {svc.service_id}.onion ({handle})")
+            except Exception as exc:
+                status(f"sovereign services  : FAILED ({exc})")
+                status("host service is unaffected and remains LIVE")
 
     status(f"host UPA            : {host.upa}")
     print()

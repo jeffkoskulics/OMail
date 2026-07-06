@@ -72,6 +72,42 @@ def test_serve_boots_and_shuts_down(tmp_path, capsys, aiohttp_unused_port):
     assert "Bookmark it" not in out
 
 
+def test_sovereign_key_rows_reads_db_on_calling_thread(tmp_path):
+    """Regression: sovereign provisioning used to pass the Database into an
+    executor thread, tripping sqlite3's same-thread check the moment the
+    host service went live. DB reads now happen before the executor hop."""
+    import concurrent.futures
+
+    from omail.db import Database
+    from omail.cli import _sovereign_key_rows
+    from omail.key_pair import KeyPair
+
+    db = Database(tmp_path / "omail.db")
+    kp = KeyPair()
+    kp.generate_key_pair()
+    user_id = db.create_user("tenant-1", "stub.onion/stub", b"\x00" * 32)
+    db.update_user_upa(user_id, "rewritten.onion/stub", sovereign=True)
+    db.set_config(f"sovereign_onion_key:{user_id}", kp.get_private_str())
+
+    # Reads on the owning thread succeed and find the promoted tenant
+    rows = _sovereign_key_rows(db)
+    assert len(rows) == 1
+    assert rows[0][0] == "tenant-1"
+    assert "PRIVATE KEY" in rows[0][1]
+
+    # The old code path — touching the Database from another thread —
+    # still fails, proving the executor hop must not carry `db`.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        with pytest.raises(Exception, match="thread"):
+            pool.submit(_sovereign_key_rows, db).result()
+
+    # The rows themselves are plain data and cross threads freely.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        handle, pem = pool.submit(lambda: rows[0]).result()
+    assert handle == "tenant-1"
+    db.close()
+
+
 def test_tor_error_hints_cover_auth_failures():
     from stem import SocketError
     from stem.connection import IncorrectPassword, MissingPassword
