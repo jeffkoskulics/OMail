@@ -49,7 +49,16 @@ The terminal prints live status and an ASCII QR code of the generated
 `.onion` portal URL. Open it in Tor Browser, create an identity with a
 passkey, and say `ping` to your auto-provisioned **Host Node** contact.
 
-Tor needs a control port; either set `TOR_PASSWORD` or pass
+Tor needs a control port. The recommended torrc setup is cookie auth —
+no password to manage:
+
+```
+ControlPort 9051
+CookieAuthentication 1
+```
+
+(then `brew services restart tor` / `systemctl restart tor`). If your torrc
+uses `HashedControlPassword` instead, set `TOR_PASSWORD` or pass
 `--tor-password` (see `--control-port`, default 9051).
 
 ## Repository layout

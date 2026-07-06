@@ -34,7 +34,8 @@ def test_parser_overrides():
 
 def test_serve_boots_and_shuts_down(tmp_path, capsys, aiohttp_unused_port):
     """Full node boot in --no-tor mode: portal comes up, status renders,
-    QR is printed, clean shutdown."""
+    local-only warning is shown (no QR for an unpublished onion), clean
+    shutdown."""
     port = aiohttp_unused_port()
     args = build_parser().parse_args(
         ["--no-tor", "--data-dir", str(tmp_path), "--port", str(port),
@@ -61,8 +62,35 @@ def test_serve_boots_and_shuts_down(tmp_path, capsys, aiohttp_unused_port):
     out = capsys.readouterr().out
     assert "host name           : Boot Test" in out
     assert "SKIPPED (--no-tor)" in out
+    assert "LOCAL-ONLY" in out
+    assert f"http://127.0.0.1:{port}" in out
+    # The unpublished onion address is disclosed but clearly marked dead,
+    # and never rendered as a bookmarkable QR code.
+    assert "NOT" in out
     assert ".onion" in out
-    assert "█" in out  # the QR code
+    assert "█" not in out.split(".onion")[-1]
+    assert "Bookmark it" not in out
+
+
+def test_tor_error_hints_cover_auth_failures():
+    from stem import SocketError
+    from stem.connection import IncorrectPassword, MissingPassword
+
+    from omail.cli import _tor_error_hints
+
+    hints = "\n".join(_tor_error_hints(MissingPassword("no passphrase provided"), 9051))
+    assert "CookieAuthentication 1" in hints
+    assert "--tor-password" in hints
+
+    hints = "\n".join(_tor_error_hints(IncorrectPassword("bad"), 9051))
+    assert "tor --hash-password" in hints
+
+    hints = "\n".join(_tor_error_hints(SocketError("connection refused"), 9151))
+    assert "9151" in hints
+    assert "ControlPort" in hints
+
+    hints = "\n".join(_tor_error_hints(RuntimeError("weird"), 9051))
+    assert "9051" in hints
 
 
 def test_status_prints_timestamped(capsys):

@@ -53,12 +53,65 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-port", type=int, default=9051,
                         help="Tor control port")
     parser.add_argument("--tor-password", default=os.environ.get("TOR_PASSWORD"),
-                        help="Tor control port password (default: $TOR_PASSWORD)")
+                        help="Tor control port password (default: $TOR_PASSWORD; "
+                             "not needed when torrc uses CookieAuthentication 1)")
     parser.add_argument("--no-tor", action="store_true",
                         help="development mode: skip the Tor Hidden Service")
     parser.add_argument("--version", action="version",
                         version=f"omail {__version__}")
     return parser
+
+
+def _tor_error_hints(exc: Exception, control_port: int) -> list:
+    """Turn a stem/Tor failure into actionable remediation steps."""
+    from stem import SocketError
+    from stem.connection import (
+        AuthenticationFailure,
+        IncorrectPassword,
+        MissingPassword,
+        UnreadableCookieFile,
+    )
+
+    if isinstance(exc, MissingPassword):
+        return [
+            "tor control port requires a password and none was provided.",
+            "Either pass it:      omail --tor-password <pw>   (or export TOR_PASSWORD)",
+            "Or switch to cookie auth in your torrc (recommended):",
+            "    ControlPort 9051",
+            "    CookieAuthentication 1",
+            "    # remove any HashedControlPassword line",
+            "then restart tor (brew services restart tor) and rerun omail.",
+        ]
+    if isinstance(exc, IncorrectPassword):
+        return [
+            "the Tor control password was rejected.",
+            "Check --tor-password / $TOR_PASSWORD against the HashedControlPassword",
+            "in your torrc, or regenerate it with: tor --hash-password <new-pw>",
+        ]
+    if isinstance(exc, UnreadableCookieFile):
+        return [
+            "Tor's auth cookie exists but cannot be read.",
+            "Run omail as the same user that runs tor (brew services runs it as you),",
+            "or switch the control port to password auth (HashedControlPassword).",
+        ]
+    if isinstance(exc, AuthenticationFailure):
+        return [
+            "could not authenticate to the Tor control port.",
+            "Check your torrc auth settings: CookieAuthentication 1 (recommended)",
+            "or HashedControlPassword + --tor-password.",
+        ]
+    if isinstance(exc, SocketError):
+        return [
+            f"nothing is listening on the Tor control port ({control_port}).",
+            "Is tor running? Enable the control port in your torrc:",
+            "    ControlPort 9051",
+            "    CookieAuthentication 1",
+            "then restart tor, or start one ad hoc: tor --controlport 9051",
+        ]
+    return [
+        "unexpected Tor error — check that tor is running and the control",
+        f"port ({control_port}) matches your torrc's ControlPort.",
+    ]
 
 
 def _start_onion(host_kp: KeyPair, args) -> OnionService:
@@ -128,7 +181,9 @@ async def serve(args) -> int:
 
     # 2. Tor Hidden Service in front of it
     onion_url = f"http://{host.onion}"
+    local_url = f"http://127.0.0.1:{args.port}"
     services = []
+    tor_live = False
     if args.no_tor:
         status("tor hidden service  : SKIPPED (--no-tor); portal is local-only")
     else:
@@ -138,6 +193,7 @@ async def serve(args) -> int:
             service = await loop.run_in_executor(None, _start_onion,
                                                  host.key_pair(), args)
             services.append(("host", service))
+            tor_live = True
             status(f"tor hidden service  : LIVE at {host.onion}")
             sovereign = await loop.run_in_executor(
                 None, _sovereign_onion_services, db, args
@@ -147,14 +203,24 @@ async def serve(args) -> int:
                 status(f"sovereign service   : {svc.service_id}.onion ({handle})")
         except Exception as exc:
             status(f"tor hidden service  : FAILED ({exc})")
+            for hint in _tor_error_hints(exc, args.control_port):
+                status(f"  {hint}")
             status("continuing local-only; fix Tor and restart to go dark")
 
     status(f"host UPA            : {host.upa}")
     print()
-    print(f"  Access the {host.host_name} OMail portal in Tor Browser:")
-    print(f"\n      {onion_url}\n")
-    print("  Bookmark it — there is no clearnet fallback. Scan to open:\n")
-    print(render_ascii(onion_url))
+    if tor_live:
+        print(f"  Access the {host.host_name} OMail portal in Tor Browser:")
+        print(f"\n      {onion_url}\n")
+        print("  Bookmark it — there is no clearnet fallback. Scan to open:\n")
+        print(render_ascii(onion_url))
+    else:
+        print(f"  The {host.host_name} OMail portal is LOCAL-ONLY right now:")
+        print(f"\n      {local_url}\n")
+        print("  The onion address below is reserved for this node but is NOT")
+        print("  reachable in Tor Browser until Tor publishes it (fix Tor per the")
+        print("  hints above, then restart omail):\n")
+        print(f"      {onion_url}")
 
     # 3. Serve until interrupted
     stop = asyncio.Event()
@@ -164,7 +230,10 @@ async def serve(args) -> int:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:  # e.g. Windows event loops
             pass
-    status("node is up — waiting for Tor circuits (Ctrl+C to stop)")
+    if tor_live:
+        status("node is up — waiting for Tor circuits (Ctrl+C to stop)")
+    else:
+        status("node is up — LOCAL-ONLY, not reachable over Tor (Ctrl+C to stop)")
     try:
         await stop.wait()
     finally:
