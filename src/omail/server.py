@@ -71,9 +71,17 @@ def create_app(
     async def _fed_notify(user_id: int, payload: dict) -> None:
         await _notify(app, user_id, payload)
 
-    # Sending side of federation. `remote` stays None here (same-host fast
-    # path only); Phase 2b wires the Tor transport, and tests inject one.
-    app["federation"] = FederationClient(db, host, notify=_fed_notify)
+    # Sending side of federation. When a Tor SOCKS port is configured we can
+    # reach peer onions; otherwise only the same-host fast path works (and
+    # tests inject their own transport).
+    remote = None
+    socks_port = (tor_options or {}).get("socks_port")
+    if socks_port is not None:
+        from omail.federation import tor_remote_transport
+        remote = tor_remote_transport(socks_port)
+    app["federation"] = FederationClient(
+        db, host, notify=_fed_notify, remote=remote
+    )
 
     # One-time migration for nodes created before the rename: existing
     # tenants keep a host contact stored under the old default label.

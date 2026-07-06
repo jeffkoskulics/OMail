@@ -52,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="virtual port exposed on the onion service")
     parser.add_argument("--control-port", type=int, default=9051,
                         help="Tor control port")
+    parser.add_argument("--socks-port", type=int, default=9050,
+                        help="Tor SOCKS port for host-to-host federation")
     parser.add_argument("--tor-password", default=os.environ.get("TOR_PASSWORD"),
                         help="Tor control port password (default: $TOR_PASSWORD; "
                              "not needed when torrc uses CookieAuthentication 1)")
@@ -211,6 +213,8 @@ async def serve(args) -> int:
             "control_port": args.control_port,
             "password": args.tor_password,
             "local_port": args.port,
+            # Only enable the Tor federation transport when Tor is in play.
+            **({} if args.no_tor else {"socks_port": args.socks_port}),
         },
         start_tor_on_migration=not args.no_tor,
     )

@@ -16,6 +16,7 @@ from omail.crypto.triple_ratchet import (
     make_prekey_bundle,
 )
 from omail.db import Database
+from omail.federation import FederationError
 from omail.host import HostNode
 from omail.server import create_app
 from tests.soft_authenticator import SoftAuthenticator
@@ -757,3 +758,118 @@ async def test_accept_unknown_invite_fails(client, host):
         headers=bob.headers,
     )
     assert resp.status == 404
+
+
+async def test_relationship_federation_two_hosts(aiohttp_client):
+    """The same connect + message flow, but Alice and Bob live on two
+    independent hosts. A transport injected into each FederationClient routes
+    an onion to the other host's test client, proving the cross-host path
+    deterministically without a live Tor."""
+    db_a = Database(":memory:")
+    host_a = HostNode(db_a, host_name="Alpha")
+    db_b = Database(":memory:")
+    host_b = HostNode(db_b, host_name="Beta")
+    app_a = create_app(db_a, host_a, start_tor_on_migration=False)
+    app_b = create_app(db_b, host_b, start_tor_on_migration=False)
+    client_a = await aiohttp_client(app_a)
+    client_b = await aiohttp_client(app_b)
+
+    registry = {host_a.onion: client_a, host_b.onion: client_b}
+
+    async def remote(peer_onion, path, payload):
+        target = registry[peer_onion]
+        if path.endswith("/bundle"):
+            resp = await target.get(path, params=payload)
+        else:
+            resp = await target.post(path, json=payload)
+        data = await resp.json()
+        if resp.status >= 400:
+            raise FederationError(resp.status, data.get("error", "fed error"))
+        return data
+
+    app_a["federation"].remote = remote
+    app_b["federation"].remote = remote
+
+    alice = PortalUser(client_a)
+    await alice.register()
+    bob = PortalUser(client_b)
+    await bob.register()
+
+    # Alice mints an invite on host A
+    a_seed, a_pub, a_bundles, a_keys = _slot_bundles()
+    a_rel = await (await client_a.post(
+        "/api/relationships",
+        json={"label": "Bob", "slot_pub": _b64(a_pub), "bundles": a_bundles},
+        headers=alice.headers,
+    )).json()
+    invite_upa = a_rel["inbound_upa"]
+    alice_slot_keys = dict(zip(a_rel["prekey_ids"], a_keys))
+    assert invite_upa.startswith(host_a.onion + "/")
+
+    # Bob accepts on host B -> the connect handshake crosses to host A
+    b_seed, b_pub, b_bundles, b_keys = _slot_bundles()
+    resp = await client_b.post(
+        "/api/relationships/accept",
+        json={"invite_upa": invite_upa, "label": "Alice",
+              "slot_pub": _b64(b_pub), "bundles": b_bundles},
+        headers=bob.headers,
+    )
+    assert resp.status == 200, await resp.text()
+    b_rel = await resp.json()
+    assert b_rel["state"] == "connected"
+    assert b_rel["inbound_upa"].startswith(host_b.onion + "/")
+    bob_contact = b_rel["contact"]
+
+    # Alice's relationship on host A is now bound
+    a_rels = await (
+        await client_a.get("/api/relationships", headers=alice.headers)
+    ).json()
+    assert a_rels[0]["state"] == "connected"
+    assert a_rels[0]["outbound_upa"] == b_rel["inbound_upa"]
+    alice_contact = next(
+        c for c in await (
+            await client_a.get("/api/contacts", headers=alice.headers)
+        ).json() if not c["is_host"]
+    )
+
+    # Bob -> Alice, across hosts
+    data = await (await client_b.get(
+        "/api/bundle", params={"upa": invite_upa}, headers=bob.headers
+    )).json()
+    bt = TripleRatchet.initiate(b_seed, PrekeyBundle.from_dict(data["bundle"]))
+    env = bt.encrypt(b"cross-host hello")
+    result = await client_b.post(
+        "/api/messages/send",
+        json={"contact_id": bob_contact["id"], "envelope": env,
+              "prekey_id": data["prekey_id"], "archive": {"iv": "x", "ct": "x"}},
+        headers=bob.headers,
+    )
+    assert (await result.json())["delivery"] == "federated"
+
+    msgs = await (await client_a.get(
+        "/api/messages", params={"contact_id": alice_contact["id"]},
+        headers=alice.headers,
+    )).json()
+    env_in = [m for m in msgs if m["direction"] == "in"][0]["envelope"]
+    at = TripleRatchet.respond(alice_slot_keys[env_in["prekey_id"]], env_in["init"])
+    assert at.decrypt(env_in) == b"cross-host hello"
+
+    # Alice -> Bob, across hosts
+    reply = at.encrypt(b"cross-host reply")
+    result = await client_a.post(
+        "/api/messages/send",
+        json={"contact_id": alice_contact["id"], "envelope": reply,
+              "archive": {"iv": "x", "ct": "x"}},
+        headers=alice.headers,
+    )
+    assert (await result.json())["delivery"] == "federated"
+
+    bmsgs = await (await client_b.get(
+        "/api/messages", params={"contact_id": bob_contact["id"]},
+        headers=bob.headers,
+    )).json()
+    b_in = [m for m in bmsgs if m["direction"] == "in"][0]["envelope"]
+    assert bt.decrypt(b_in) == b"cross-host reply"
+
+    db_a.close()
+    db_b.close()

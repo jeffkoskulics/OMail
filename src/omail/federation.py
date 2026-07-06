@@ -133,6 +133,45 @@ async def _no_remote(peer_onion: str, path: str, payload: dict) -> dict:
     )
 
 
+def tor_remote_transport(socks_port: int = 9050,
+                         timeout: float = 30.0) -> RemoteTransport:
+    """A remote transport that reaches peer onions over Tor's SOCKS proxy.
+
+    aiohttp-socks is imported lazily so nodes that never federate (or run
+    with --no-tor) don't need it. GET is used for /bundle (payload becomes
+    query params); everything else is POSTed as JSON.
+    """
+    async def remote(peer_onion: str, path: str, payload: dict) -> dict:
+        import aiohttp
+        from aiohttp_socks import ProxyConnector
+
+        url = f"http://{peer_onion}{path}"
+        connector = ProxyConnector.from_url(f"socks5h://127.0.0.1:{socks_port}")
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        try:
+            async with aiohttp.ClientSession(
+                connector=connector, timeout=client_timeout
+            ) as session:
+                if path.endswith("/bundle"):
+                    ctx = session.get(url, params=payload)
+                else:
+                    ctx = session.post(url, json=payload)
+                async with ctx as resp:
+                    data = await resp.json()
+                    if resp.status >= 400:
+                        raise FederationError(
+                            resp.status,
+                            data.get("error", "federation error"),
+                        )
+                    return data
+        except FederationError:
+            raise
+        except Exception as exc:  # network / Tor / decode failures
+            raise FederationError(502, f"Could not reach {peer_onion}: {exc}")
+
+    return remote
+
+
 class FederationClient:
     """The sending side of federation. Same-host calls go straight to the
     cores; cross-host calls go through the injected remote transport."""
