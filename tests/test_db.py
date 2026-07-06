@@ -77,6 +77,54 @@ def test_contacts(db, user_id):
     assert db.get_host_contact(user_id)["upa"] == "sovereign.onion/hostaddr"
 
 
+def test_relationship_slot_lifecycle(db, user_id):
+    # Alice mints an inbound slot reserved for "Bob"
+    rel_id = db.create_relationship(user_id, "Bob", "alice.onion/bobslotkey")
+    rel = db.get_relationship(user_id, rel_id)
+    assert rel["label"] == "Bob"
+    assert rel["inbound_upa"] == "alice.onion/bobslotkey"
+    assert rel["outbound_upa"] is None
+    assert rel["state"] == "invited"
+
+    # Routing lookup by the slot address
+    assert db.get_relationship_by_inbound_upa("alice.onion/bobslotkey")["id"] == rel_id
+    assert db.get_relationship_by_inbound_upa("nope.onion/x") is None
+
+    # The connect handshake records the reverse address Bob minted for us
+    db.connect_relationship(rel_id, "bob.onion/aliceslotkey")
+    rel = db.get_relationship(user_id, rel_id)
+    assert rel["outbound_upa"] == "bob.onion/aliceslotkey"
+    assert rel["state"] == "connected"
+
+    assert [r["label"] for r in db.list_relationships(user_id)] == ["Bob"]
+
+
+def test_relationship_prekeys(db, user_id):
+    rel_id = db.create_relationship(user_id, "Bob", "alice.onion/bobslotkey")
+    assert db.count_relationship_prekeys(rel_id) == 0
+
+    db.add_relationship_prekey(rel_id, {"spk": "b1"})
+    db.add_relationship_prekey(rel_id, {"spk": "b2"})
+    assert db.count_relationship_prekeys(rel_id) == 2
+
+    first = db.take_relationship_prekey(rel_id)
+    assert first == {"spk": "b1"}
+    assert db.count_relationship_prekeys(rel_id) == 1
+    assert db.take_relationship_prekey(rel_id) == {"spk": "b2"}
+    assert db.take_relationship_prekey(rel_id) is None  # exhausted
+
+
+def test_relationships_cascade_on_user_delete(db, user_id):
+    rel_id = db.create_relationship(user_id, "Bob", "alice.onion/bobslotkey")
+    db.add_relationship_prekey(rel_id, {"spk": "b1"})
+    db.conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    db.conn.commit()
+    assert db.get_relationship_by_inbound_upa("alice.onion/bobslotkey") is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM relationship_prekeys"
+    ).fetchone()["n"] == 0
+
+
 def test_rename_host_contacts_migration(db, user_id):
     host_id = db.add_contact(user_id, "Host Node", "host.onion/h", is_host=True)
     friend_id = db.add_contact(user_id, "Host Node", "friend.onion/f")  # not is_host

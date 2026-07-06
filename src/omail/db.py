@@ -81,6 +81,29 @@ CREATE TABLE IF NOT EXISTS host_sessions (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     state   TEXT NOT NULL                    -- host-side TripleRatchet state
 );
+-- Per-relationship inbound slots (see docs/concepts.md). Each row is an
+-- address minted on THIS host, owned by a local user, reserved for one
+-- correspondent. inbound_upa is what the peer sends TO (lives here);
+-- outbound_upa is the reverse address the peer minted on their host for us
+-- (null until the connect handshake completes). The slot's private keys
+-- never touch the server: only public prekey bundles are stored, in
+-- relationship_prekeys, exactly as user_prekeys works for identities.
+CREATE TABLE IF NOT EXISTS relationships (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label        TEXT NOT NULL,              -- local-only name for the correspondent
+    inbound_upa  TEXT NOT NULL UNIQUE,       -- slot the peer sends to (on this host)
+    outbound_upa TEXT,                        -- address we send to (peer's host)
+    state        TEXT NOT NULL DEFAULT 'invited',  -- invited | connected
+    created_at   REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS relationship_prekeys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    relationship_id INTEGER NOT NULL REFERENCES relationships(id) ON DELETE CASCADE,
+    bundle          TEXT NOT NULL,           -- public PrekeyBundle JSON only
+    used            INTEGER NOT NULL DEFAULT 0,
+    created_at      REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS auth_sessions (
     token      TEXT PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -249,6 +272,79 @@ class Database:
         )
         self.conn.commit()
         return cur.rowcount
+
+    # -- relationships (per-relationship inbound slots) --------------------
+
+    def create_relationship(
+        self, owner_id: int, label: str, inbound_upa: str
+    ) -> int:
+        """Mints a local user's inbound slot for one correspondent."""
+        cur = self.conn.execute(
+            "INSERT INTO relationships (owner_id, label, inbound_upa, "
+            "state, created_at) VALUES (?, ?, ?, 'invited', ?)",
+            (owner_id, label, inbound_upa, time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_relationship(self, owner_id: int, rel_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM relationships WHERE owner_id = ? AND id = ?",
+            (owner_id, rel_id),
+        ).fetchone()
+
+    def get_relationship_by_inbound_upa(self, upa: str) -> Optional[sqlite3.Row]:
+        """Routing lookup: which local relationship owns this inbound slot."""
+        return self.conn.execute(
+            "SELECT * FROM relationships WHERE inbound_upa = ?", (upa,)
+        ).fetchone()
+
+    def list_relationships(self, owner_id: int) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM relationships WHERE owner_id = ? ORDER BY id",
+            (owner_id,),
+        ).fetchall()
+
+    def connect_relationship(self, rel_id: int, outbound_upa: str) -> None:
+        """Records the reverse address the peer minted for us and marks the
+        relationship connected (completes the two-step handshake)."""
+        self.conn.execute(
+            "UPDATE relationships SET outbound_upa = ?, state = 'connected' "
+            "WHERE id = ?",
+            (outbound_upa, rel_id),
+        )
+        self.conn.commit()
+
+    def add_relationship_prekey(self, relationship_id: int, bundle: Dict) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO relationship_prekeys (relationship_id, bundle, "
+            "created_at) VALUES (?, ?, ?)",
+            (relationship_id, json.dumps(bundle), time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def take_relationship_prekey(self, relationship_id: int) -> Optional[Dict]:
+        """Claims one unused prekey bundle for a slot (marks it used)."""
+        row = self.conn.execute(
+            "SELECT id, bundle FROM relationship_prekeys "
+            "WHERE relationship_id = ? AND used = 0 ORDER BY id LIMIT 1",
+            (relationship_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        self.conn.execute(
+            "UPDATE relationship_prekeys SET used = 1 WHERE id = ?", (row["id"],)
+        )
+        self.conn.commit()
+        return json.loads(row["bundle"])
+
+    def count_relationship_prekeys(self, relationship_id: int) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) AS n FROM relationship_prekeys "
+            "WHERE relationship_id = ? AND used = 0",
+            (relationship_id,),
+        ).fetchone()["n"]
 
     # -- messages -----------------------------------------------------------
 
