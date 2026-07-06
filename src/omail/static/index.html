@@ -61,6 +61,41 @@
     </section>
   </main>
 
+  <!-- ============ GUEST CLAIM VIEW (opened via a ?claim= invite link) ============ -->
+  <main id="claim-view" class="hidden">
+    <section class="hero">
+      <h1>Set up your inbox.</h1>
+      <p>
+        Someone invited you to OMail. This is the <strong>only</strong> time
+        you'll set up a credential for this inbox — afterwards, sign in with
+        it directly. Choose a passkey when you can; a device key works if
+        your browser doesn't support passkeys.
+      </p>
+      <div class="cta">
+        <button id="btn-claim-passkey" class="primary">Set up with a passkey</button>
+        <button id="btn-claim-devicekey">Set up with a device key</button>
+      </div>
+      <p id="claim-status" class="status"></p>
+    </section>
+  </main>
+
+  <!-- ============ DEVICE LINK CLAIM VIEW (opened via a #link= fragment) ============ -->
+  <main id="link-claim-view" class="hidden">
+    <section class="hero">
+      <h1>Add this device.</h1>
+      <p>
+        Complete a credential ceremony to link this browser to your existing
+        OMail identity. Your keys transfer only after you prove access with
+        a passkey or device key here.
+      </p>
+      <div class="cta">
+        <button id="btn-linkclaim-passkey" class="primary">Link with a passkey</button>
+        <button id="btn-linkclaim-devicekey">Link with a device key</button>
+      </div>
+      <p id="link-claim-status" class="status"></p>
+    </section>
+  </main>
+
   <!-- ============ WELCOME (new user) ============ -->
   <div id="welcome-overlay" class="overlay hidden">
     <div class="card">
@@ -87,7 +122,9 @@
         <div class="me-upa"><code id="me-upa"></code>
           <button class="copy" data-copy="#me-upa" title="Copy UPA">⧉</button></div>
         <button id="btn-create-invite" class="ghost">✚ Create invite</button>
+        <button id="btn-invite-guest" class="ghost">✚ Invite a guest</button>
         <button id="btn-show-qr" class="ghost">Show my QR</button>
+        <button id="btn-devices" class="ghost">🔑 Devices</button>
         <button id="btn-migrate" class="ghost">⚑ Become Your Own Host</button>
       </div>
       <div class="contacts-head">
@@ -140,6 +177,45 @@
         <p class="subtle">Only this contact should ever hold this address.</p>
       </div>
       <button class="ghost" id="invite-close">Close</button>
+    </div>
+  </div>
+
+  <div id="guest-overlay" class="overlay hidden">
+    <div class="card">
+      <h3>Invite a guest</h3>
+      <p class="subtle">Charlie doesn't use OMail yet. This mints his inbox
+        on your host and a single address for the two of you — share the
+        link or QR with him out-of-band. Whoever opens it first sets up the
+        one credential that becomes his permanent sign-in.</p>
+      <form id="guest-form">
+        <input id="guest-label" placeholder="Name (e.g. Charlie)" autocomplete="off" required>
+        <button type="submit" class="primary" id="guest-mint">Create guest inbox</button>
+      </form>
+      <div id="guest-result" class="hidden">
+        <p class="upa-box"><code id="guest-upa"></code>
+          <button class="copy" data-copy="#guest-upa" title="Copy UPA">⧉</button></p>
+        <div id="guest-qr" class="qr"></div>
+        <p class="subtle">This link is a one-time claim — keep it confidential
+          between you and Charlie until he's set up.</p>
+      </div>
+      <button class="ghost" id="guest-close">Close</button>
+    </div>
+  </div>
+
+  <div id="devices-overlay" class="overlay hidden">
+    <div class="card">
+      <h3>Devices</h3>
+      <p class="subtle">Credentials that can sign in to this identity.</p>
+      <ul id="devices-list"></ul>
+      <button id="btn-link-device" class="primary">✚ Link a new device</button>
+      <div id="link-result" class="hidden">
+        <p class="upa-box"><code id="link-url"></code>
+          <button class="copy" data-copy="#link-url" title="Copy link">⧉</button></p>
+        <div id="link-qr" class="qr"></div>
+        <p class="subtle">Scan or open this on the new device. It expires in
+          a few minutes and works once.</p>
+      </div>
+      <button class="ghost" id="devices-close">Close</button>
     </div>
   </div>
 

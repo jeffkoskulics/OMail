@@ -90,9 +90,12 @@ scripts/browser_e2e.js Playwright E2E (virtual CTAP2 authenticator with PRF)
 ## Testing
 
 ```bash
-pytest                              # full suite (JS interop auto-skips without node)
-node scripts/browser_e2e.js         # passkey portal E2E (virtual CTAP2 + PRF)
-node scripts/browser_e2e_devicekey.js  # device-key fallback E2E (no WebAuthn)
+pytest                                    # full suite (JS interop auto-skips without node)
+node scripts/browser_e2e.js              # passkey portal E2E (virtual CTAP2 + PRF)
+node scripts/browser_e2e_devicekey.js    # device-key fallback E2E (no WebAuthn)
+node scripts/browser_e2e_peer.js         # invite -> accept -> peer chat
+node scripts/browser_e2e_guest.js        # guest invite -> claim -> Administrator chat
+node scripts/browser_e2e_devicelink.js   # multi-device linking
 ```
 
 ## Authentication
@@ -115,6 +118,23 @@ persisted, so the address is stable across restarts, and it is never
 printed in QR codes or embedded in any UPA. Use it as your private door
 to administer the mailbox even if the public address is being flooded.
 Disable it with `--no-private-onion`.
+
+## Guests and multi-device (see docs/concepts.md)
+
+A **guest** is a hosted correspondent who doesn't run OMail yet (Charlie in
+the docs). Their host mints a single UPA ahead of time as a one-time claim
+capability; whoever opens it first completes the one credential ceremony
+(passkey, falling back to device-key) that becomes their permanent
+sign-in, and the invite is spent — after that, only the credential grants
+access, not the link. A claimed guest is an ordinary tenant from then on
+and can migrate to their own host later, same as anyone else.
+
+Copying an identity to a **new device** is a separate, explicit action, not
+a bearer link: an already-signed-in device mints a short-lived, single-use
+link and uploads an encrypted parcel of the vault (keyed by a secret that
+travels only in the QR/URL fragment, never seen by the server); the new
+device decrypts it locally and registers its own credential against the
+link. `GET /api/credentials` lists everything with access.
 
 ## Security notes (prototype)
 

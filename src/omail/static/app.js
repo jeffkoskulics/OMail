@@ -17,6 +17,7 @@
 
   const HOST_NAME = document.body.dataset.hostName;
   const HOST_ONION = document.body.dataset.hostOnion;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // ------------------------------------------------------------- state ----
   const state = {
@@ -208,6 +209,21 @@
     return rel;
   }
 
+  // Mint a guest invite: the host generates the address; the guest's real
+  // identity is created in THEIR browser at claim time, not here. Returns
+  // {id, label, inbound_upa, claimed} — inbound_upa is the one-time claim
+  // link (as ?claim=<upa>) and, after claim, the guest's permanent address.
+  async function createGuestInvite(label) {
+    return api("/api/guests", { json: { label } });
+  }
+
+  function claimUrlFor(inboundUpa) {
+    const url = new URL(location.href);
+    url.search = `?claim=${encodeURIComponent(inboundUpa)}`;
+    url.hash = "";
+    return url.toString();
+  }
+
   // Store a minted slot's private material in the vault, keying each
   // responder key by the server prekey id (so an inbound handshake envelope
   // naming that prekey_id can be answered).
@@ -312,8 +328,8 @@
     $("#mailbox-view").classList.add("hidden");
     $(view).classList.remove("hidden");
   }
-  function setStatus(text, sticky = false) {
-    const el = $("#auth-status");
+  function setStatus(text, sticky = false, selector = "#auth-status") {
+    const el = $(selector);
     el.textContent = text || "";
     if (!sticky && text) setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 8000);
   }
@@ -524,6 +540,87 @@
     }
   }
 
+  // Guest claim: the invite UPA is a one-time claim capability (see
+  // docs/concepts.md). Whoever opens the ?claim= link first completes the
+  // ONE credential ceremony that becomes their permanent sign-in — after
+  // that, only the credential grants access, not the link.
+  function claimUpaFromUrl() {
+    return new URLSearchParams(location.search).get("claim");
+  }
+
+  function clearClaimFromUrl() {
+    const url = new URL(location.href);
+    url.searchParams.delete("claim");
+    history.replaceState(null, "", url.pathname + url.search);
+  }
+
+  async function claimGuestPasskey() {
+    const inboundUpa = claimUpaFromUrl();
+    try {
+      setStatus("Waiting for your authenticator…", true, "#claim-status");
+      const begin = await api("/api/guests/claim/webauthn/begin", {
+        json: { inbound_upa: inboundUpa },
+      });
+      const credential = await navigator.credentials.create(
+        decodeCreationOptions(begin.options),
+      );
+      const seed = C.randomBytes(32);
+      const identity = C.identityFromSeed(seed);
+      const info = await api("/api/guests/claim/webauthn/complete", {
+        json: {
+          ceremony: begin.ceremony,
+          credential: encodeAttestation(credential),
+          identity_pub: C.b64(identity.edPub),
+        },
+      });
+      state.me = info;
+      let prf = prfFromExtensions(credential);
+      if (!prf) prf = await obtainPrfViaAssertion(new Uint8Array(credential.rawId));
+      state.vaultKey = prf ? await C.deriveVaultKey(prf) : fallbackVaultKey();
+      state.vault = newVault(seed);
+      await saveVault();
+      await publishPrekeys();
+      clearClaimFromUrl();
+      setStatus("");
+      await enterMailbox();
+      showWelcome();
+    } catch (err) {
+      setStatus(`Setup failed: ${err.message}`, true, "#claim-status");
+    }
+  }
+
+  async function claimGuestDeviceKey() {
+    const inboundUpa = claimUpaFromUrl();
+    try {
+      setStatus("Setting up your device key…", true, "#claim-status");
+      const begin = await api("/api/guests/claim/devicekey/begin", {
+        json: { inbound_upa: inboundUpa },
+      });
+      const pair = deviceKeyPair(true);
+      const seed = C.randomBytes(32);
+      const identity = C.identityFromSeed(seed);
+      const info = await api("/api/guests/claim/devicekey/complete", {
+        json: {
+          ceremony: begin.ceremony,
+          device_pub: C.b64(pair.publicKey),
+          signature: signChallenge(pair, begin.challenge),
+          identity_pub: C.b64(identity.edPub),
+        },
+      });
+      state.me = info;
+      state.vaultKey = fallbackVaultKey();
+      state.vault = newVault(seed);
+      await saveVault();
+      await publishPrekeys();
+      clearClaimFromUrl();
+      setStatus("Set up with a device key — this browser profile holds your only credentials.", true, "#claim-status");
+      await enterMailbox();
+      showWelcome();
+    } catch (err) {
+      setStatus(`Setup failed: ${err.message}`, true, "#claim-status");
+    }
+  }
+
   // Device-key fallback: for browsers where WebAuthn is unavailable or
   // blocked (Tor Browser; Chromium on plain-http .onion origins). An
   // Ed25519 key generated and kept in this browser profile signs a server
@@ -676,6 +773,102 @@
     }
   }
 
+  // ------------------------------------------------------- multi-device ----
+  // Copying an identity to a new device is a deliberate action proving
+  // ownership via the CURRENT session, not a bearer secret: this device
+  // mints a short-lived link and uploads a parcel of the decrypted vault
+  // encrypted with a link_secret that travels only inside the QR/URL
+  // fragment (never sent to the server). The new device decrypts it
+  // locally, then registers its own credential bound to the link.
+  async function renderDevicesList() {
+    const creds = await api("/api/credentials");
+    const list = $("#devices-list");
+    list.innerHTML = creds.map((c) => `<li>${esc(c.kind)} — added ${
+      new Date(c.created_at * 1000).toLocaleString()}</li>`).join("");
+  }
+
+  async function startDeviceLink() {
+    const { link_id } = await api("/api/devices/link/begin", { json: {} });
+    const linkSecret = C.randomBytes(32);
+    const parcel = await C.vaultEncrypt(linkSecret, {
+      vault: state.vault, handle: state.me.handle,
+    });
+    await api("/api/devices/link/deliver", { json: { link_id, parcel } });
+    const url = new URL(location.href);
+    url.search = "";
+    url.hash = `link=${link_id}.${C.b64(linkSecret)}`;
+    $("#link-url").textContent = url.toString();
+    renderQr($("#link-qr"), url.toString());
+    $("#link-result").classList.remove("hidden");
+  }
+
+  function linkFragmentInfo() {
+    const match = /^#?link=([^.]+)\.(.+)$/.exec(location.hash);
+    if (!match) return null;
+    return { linkId: match[1], secret: C.unb64(decodeURIComponent(match[2])) };
+  }
+
+  function clearLinkFromUrl() {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+
+  async function completeLinkClaim(kind) {
+    const linkInfo = linkFragmentInfo();
+    if (!linkInfo) return;
+    try {
+      setStatus("Fetching your keys from the other device…", true, "#link-claim-status");
+      let fetched = null;
+      for (let i = 0; i < 10; i++) {
+        fetched = await api(`/api/devices/link/fetch?link_id=${encodeURIComponent(linkInfo.linkId)}`);
+        if (fetched.ready) break;
+        await sleep(1000);
+      }
+      if (!fetched || !fetched.ready) {
+        throw new Error("The other device hasn't delivered your keys yet — try again");
+      }
+      const parcel = await C.vaultDecrypt(linkInfo.secret, fetched.parcel);
+
+      let result;
+      if (kind === "passkey") {
+        setStatus("Waiting for your authenticator…", true, "#link-claim-status");
+        const begin = await api("/api/devices/link/claim/webauthn/begin", {
+          json: { link_id: linkInfo.linkId },
+        });
+        const credential = await navigator.credentials.create(
+          decodeCreationOptions(begin.options),
+        );
+        result = await api("/api/devices/link/claim/webauthn/complete", {
+          json: { ceremony: begin.ceremony, credential: encodeAttestation(credential) },
+        });
+        let prf = prfFromExtensions(credential);
+        if (!prf) prf = await obtainPrfViaAssertion(new Uint8Array(credential.rawId));
+        state.vaultKey = prf ? await C.deriveVaultKey(prf) : fallbackVaultKey();
+      } else {
+        setStatus("Setting up your device key…", true, "#link-claim-status");
+        const begin = await api("/api/devices/link/claim/devicekey/begin", {
+          json: { link_id: linkInfo.linkId },
+        });
+        const pair = deviceKeyPair(true);
+        result = await api("/api/devices/link/claim/devicekey/complete", {
+          json: {
+            ceremony: begin.ceremony, device_pub: C.b64(pair.publicKey),
+            signature: signChallenge(pair, begin.challenge),
+          },
+        });
+        state.vaultKey = fallbackVaultKey();
+      }
+
+      state.me = result;
+      state.vault = parcel.vault;
+      await saveVault();
+      clearLinkFromUrl();
+      setStatus("");
+      await enterMailbox();
+    } catch (err) {
+      setStatus(`Linking failed: ${err.message}`, true, "#link-claim-status");
+    }
+  }
+
   // --------------------------------------------------------------- boot ----
   function boot() {
     document.title = `${HOST_NAME} OMail`;
@@ -732,6 +925,51 @@
         $("#invite-mint").disabled = false;
       }
     });
+    $("#btn-invite-guest").addEventListener("click", () => {
+      $("#guest-label").value = "";
+      $("#guest-result").classList.add("hidden");
+      $("#guest-mint").disabled = false;
+      $("#guest-overlay").classList.remove("hidden");
+    });
+    $("#guest-close").addEventListener("click", () => {
+      $("#guest-overlay").classList.add("hidden");
+    });
+    $("#guest-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const label = $("#guest-label").value.trim();
+      if (!label) return;
+      $("#guest-mint").disabled = true;
+      try {
+        const invite = await createGuestInvite(label);
+        const url = claimUrlFor(invite.inbound_upa);
+        $("#guest-upa").textContent = url;
+        renderQr($("#guest-qr"), url);
+        $("#guest-result").classList.remove("hidden");
+      } catch (err) {
+        alert(`Could not create guest inbox: ${err.message}`);
+        $("#guest-mint").disabled = false;
+      }
+    });
+    $("#btn-devices").addEventListener("click", async () => {
+      $("#link-result").classList.add("hidden");
+      $("#devices-overlay").classList.remove("hidden");
+      try { await renderDevicesList(); } catch (err) { /* transient */ }
+    });
+    $("#devices-close").addEventListener("click", () => {
+      $("#devices-overlay").classList.add("hidden");
+    });
+    $("#btn-link-device").addEventListener("click", async () => {
+      try {
+        await startDeviceLink();
+      } catch (err) {
+        alert(`Could not start device linking: ${err.message}`);
+      }
+    });
+    $("#btn-claim-passkey").addEventListener("click", claimGuestPasskey);
+    $("#btn-claim-devicekey").addEventListener("click", claimGuestDeviceKey);
+    $("#btn-linkclaim-passkey").addEventListener("click", () => completeLinkClaim("passkey"));
+    $("#btn-linkclaim-devicekey").addEventListener("click", () => completeLinkClaim("devicekey"));
+
     document.querySelectorAll("button.copy").forEach((button) => {
       button.addEventListener("click", () => {
         navigator.clipboard.writeText($(button.dataset.copy).textContent);
@@ -759,6 +997,23 @@
         submit.disabled = false;
       }
     });
+
+    const claimUpa = claimUpaFromUrl();
+    const linkInfo = linkFragmentInfo();
+    if (linkInfo) {
+      // Adding a device: this browser has no identity yet, only a link.
+      show("#link-claim-view");
+      if (!window.PublicKeyCredential) $("#btn-linkclaim-passkey").disabled = true;
+      renderSession();
+      return;
+    }
+    if (claimUpa) {
+      // A guest invite link: the one-time claim ceremony.
+      show("#claim-view");
+      if (!window.PublicKeyCredential) $("#btn-claim-passkey").disabled = true;
+      renderSession();
+      return;
+    }
 
     if (!window.PublicKeyCredential) {
       setStatus("This browser lacks WebAuthn — you can continue with a device key instead.", true);
