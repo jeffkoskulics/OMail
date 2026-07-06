@@ -179,7 +179,7 @@ async def test_registration_creates_upa_and_host_contact(client, host):
         await client.get("/api/contacts", headers=user.headers)
     ).json()
     assert len(contacts) == 1
-    assert contacts[0]["name"] == "Host Node"
+    assert contacts[0]["name"] == "Administrator"
     assert contacts[0]["is_host"] is True
     assert contacts[0]["upa"] == host.upa
 
@@ -484,7 +484,7 @@ async def test_device_key_register_login_and_vault(client, host):
     me = await (await client.get("/api/me", headers=headers)).json()
     assert me["handle"] == info["handle"]
     contacts = await (await client.get("/api/contacts", headers=headers)).json()
-    assert contacts[0]["name"] == "Host Node"
+    assert contacts[0]["name"] == "Administrator"
 
     # Vault round-trips (opaque to the server, same as passkey users)
     put = await client.put(

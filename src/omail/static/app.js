@@ -260,7 +260,7 @@
       }
       const unread = state.unread[contact.id] || 0;
       li.innerHTML = `<span class="cname">${esc(contact.name)}</span>
-        ${contact.is_host ? '<span class="chost">HOST</span>' : ""}
+        ${contact.is_host ? '<span class="chost">ADMIN</span>' : ""}
         ${unread ? `<span class="cbadge">${unread}</span>` : ""}`;
       li.addEventListener("click", () => openThread(contact));
       list.appendChild(li);

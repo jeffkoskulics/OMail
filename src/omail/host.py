@@ -7,9 +7,9 @@ and the host's Triple Ratchet identity. The host's own UPA is therefore
 `<onion>/<same key, onion-encoded>`.
 
 The host acts as a blind router for user-to-user traffic and as a first,
-automatically provisioned contact ("Host Node") that every new tenant can
-message. Host-side ratchet sessions are the only sessions whose state the
-node stores in the clear — they are the host's own conversations.
+automatically provisioned contact ("Administrator") that every new tenant
+can message. Host-side ratchet sessions are the only sessions whose state
+the node stores in the clear — they are the host's own conversations.
 """
 import base64
 import datetime
@@ -30,7 +30,10 @@ from omail.db import Database
 from omail.key_pair import KeyPair
 from omail.upa import derive_upa, onion_address
 
-HOST_CONTACT_NAME = "Host Node"
+# The auto-provisioned first contact. Named "Administrator" because it is
+# the operator of this node: tenants are expected to be temporary and
+# eventually migrate to hosts of their own.
+HOST_CONTACT_NAME = "Administrator"
 
 
 def _b64(data: bytes) -> str:
@@ -154,7 +157,7 @@ class HostNode:
     # -- host auto-replies ---------------------------------------------------
 
     def compose_reply(self, plaintext: bytes) -> bytes:
-        """The Host Node's contact persona: a tiny deterministic responder
+        """The Administrator contact persona: a tiny deterministic responder
         that proves live bidirectional ratchet traffic."""
         text = plaintext.decode("utf-8", errors="replace").strip()
         now = datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -164,12 +167,12 @@ class HostNode:
             reply = "pong"
         elif text.lower() in {"hello", "hi", "hey"}:
             reply = (
-                f"Hello! This is {self.host_name}, your host node. "
+                f"Hello! This is {self.host_name}, your administrator. "
                 "Every byte of this conversation is Triple Ratchet encrypted."
             )
         elif text.lower() == "help":
             reply = (
-                "Host Node commands: 'ping' (liveness), 'hello' (greeting), "
+                "Administrator commands: 'ping' (liveness), 'hello' (greeting), "
                 "'help' (this text). Anything else is acknowledged and "
                 "counter-signed with a receipt timestamp."
             )
@@ -178,7 +181,7 @@ class HostNode:
         return reply.encode("utf-8")
 
     def bootstrap_contact(self, user_id: int) -> int:
-        """Auto-provisions the default 'Host Node' contact for a new user."""
+        """Auto-provisions the default 'Administrator' contact for a new user."""
         return self.db.add_contact(
             user_id, HOST_CONTACT_NAME, self.upa, is_host=True
         )

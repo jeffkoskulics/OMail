@@ -61,6 +61,13 @@ def create_app(
     app["ceremonies"] = {}
     app["ws_connections"] = {}
 
+    # One-time migration for nodes created before the rename: existing
+    # tenants keep a host contact stored under the old default label.
+    from omail.host import HOST_CONTACT_NAME
+    renamed = db.rename_host_contacts(HOST_CONTACT_NAME, old_name="Host Node")
+    if renamed:
+        announce(f"[users] renamed {renamed} host contact(s) to {HOST_CONTACT_NAME}")
+
     app.router.add_get("/", index)
     app.router.add_get("/healthz", healthz)
     app.router.add_post("/api/webauthn/register/begin", register_begin)

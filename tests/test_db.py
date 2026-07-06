@@ -77,6 +77,19 @@ def test_contacts(db, user_id):
     assert db.get_host_contact(user_id)["upa"] == "sovereign.onion/hostaddr"
 
 
+def test_rename_host_contacts_migration(db, user_id):
+    host_id = db.add_contact(user_id, "Host Node", "host.onion/h", is_host=True)
+    friend_id = db.add_contact(user_id, "Host Node", "friend.onion/f")  # not is_host
+
+    renamed = db.rename_host_contacts("Administrator", old_name="Host Node")
+    assert renamed == 1  # only the host contact, not the same-named tenant contact
+    assert db.get_contact(user_id, host_id)["name"] == "Administrator"
+    assert db.get_contact(user_id, friend_id)["name"] == "Host Node"
+
+    # Idempotent: a second run touches nothing
+    assert db.rename_host_contacts("Administrator", old_name="Host Node") == 0
+
+
 def test_duplicate_contact_upa_rejected(db, user_id):
     db.add_contact(user_id, "Ada", "other.onion/adaaddr")
     with pytest.raises(Exception):

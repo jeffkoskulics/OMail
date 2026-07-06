@@ -239,6 +239,17 @@ class Database:
         )
         self.conn.commit()
 
+    def rename_host_contacts(self, name: str, *, old_name: str) -> int:
+        """Renames auto-provisioned host contacts still carrying an outdated
+        default label (e.g. after the 'Host Node' -> 'Administrator' rename).
+        Leaves any tenant-customised name alone. Returns rows updated."""
+        cur = self.conn.execute(
+            "UPDATE contacts SET name = ? WHERE is_host = 1 AND name = ?",
+            (name, old_name),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     # -- messages -----------------------------------------------------------
 
     def add_message(
