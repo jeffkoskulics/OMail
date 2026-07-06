@@ -433,3 +433,144 @@ async def test_websocket_push_on_host_reply(client):
     assert event["type"] == "message"
     assert event["contact_id"] == contacts[0]["id"]
     await ws.close()
+
+
+# ---------------------------------------------------------------------------
+# Device-key fallback (browsers where WebAuthn is unavailable)
+# ---------------------------------------------------------------------------
+
+def _device_pair():
+    priv = ed25519.Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return priv, pub
+
+
+async def _device_register(client, priv, pub, identity_pub):
+    begin = await (
+        await client.post("/api/devicekey/register/begin", json={})
+    ).json()
+    signature = priv.sign(begin["challenge"].encode())
+    return await client.post(
+        "/api/devicekey/register/complete",
+        json={
+            "ceremony": begin["ceremony"],
+            "device_pub": _b64(pub),
+            "signature": _b64(signature),
+            "identity_pub": _b64(identity_pub),
+        },
+    )
+
+
+async def test_device_key_register_login_and_vault(client, host):
+    priv, pub = _device_pair()
+    identity_seed = _seed()
+    identity_pub = ed25519.Ed25519PrivateKey.from_private_bytes(
+        identity_seed
+    ).public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    resp = await _device_register(client, priv, pub, identity_pub)
+    assert resp.status == 200
+    info = await resp.json()
+    assert info["upa"].startswith(host.onion + "/")
+    headers = {"Authorization": f"Bearer {info['token']}"}
+
+    # Session works across the API surface, host contact bootstrapped
+    me = await (await client.get("/api/me", headers=headers)).json()
+    assert me["handle"] == info["handle"]
+    contacts = await (await client.get("/api/contacts", headers=headers)).json()
+    assert contacts[0]["name"] == "Host Node"
+
+    # Vault round-trips (opaque to the server, same as passkey users)
+    put = await client.put(
+        "/api/vault", json={"ct": "b64ct", "iv": "b64iv"}, headers=headers
+    )
+    assert put.status == 200
+    blob = await (await client.get("/api/vault", headers=headers)).json()
+    assert blob["ct"] == "b64ct"
+
+    # Fresh challenge-response login with the same device key
+    begin = await (
+        await client.post("/api/devicekey/login/begin", json={})
+    ).json()
+    signature = priv.sign(begin["challenge"].encode())
+    login = await client.post(
+        "/api/devicekey/login/complete",
+        json={
+            "ceremony": begin["ceremony"],
+            "device_pub": _b64(pub),
+            "signature": _b64(signature),
+        },
+    )
+    assert login.status == 200
+    relogged = await login.json()
+    assert relogged["handle"] == info["handle"]
+
+
+async def test_device_key_rejects_bad_signature_and_replay(client):
+    priv, pub = _device_pair()
+    identity_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    # Wrong signature never creates a user
+    begin = await (
+        await client.post("/api/devicekey/register/begin", json={})
+    ).json()
+    resp = await client.post(
+        "/api/devicekey/register/complete",
+        json={
+            "ceremony": begin["ceremony"],
+            "device_pub": _b64(pub),
+            "signature": _b64(b"\x00" * 64),
+            "identity_pub": _b64(identity_pub),
+        },
+    )
+    assert resp.status == 400
+
+    # Real registration
+    resp = await _device_register(client, priv, pub, identity_pub)
+    assert resp.status == 200
+
+    # Same device key cannot register twice
+    other_identity = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    resp = await _device_register(client, priv, pub, other_identity)
+    assert resp.status == 409
+
+    # A login ceremony is single-use: replaying the consumed ceremony fails
+    begin = await (
+        await client.post("/api/devicekey/login/begin", json={})
+    ).json()
+    body = {
+        "ceremony": begin["ceremony"],
+        "device_pub": _b64(pub),
+        "signature": _b64(priv.sign(begin["challenge"].encode())),
+    }
+    first = await client.post("/api/devicekey/login/complete", json=body)
+    assert first.status == 200
+    replay = await client.post("/api/devicekey/login/complete", json=body)
+    assert replay.status == 400
+
+    # Unknown device key is rejected even with a valid self-signature
+    stranger_priv, stranger_pub = _device_pair()
+    begin = await (
+        await client.post("/api/devicekey/login/begin", json={})
+    ).json()
+    resp = await client.post(
+        "/api/devicekey/login/complete",
+        json={
+            "ceremony": begin["ceremony"],
+            "device_pub": _b64(stranger_pub),
+            "signature": _b64(stranger_priv.sign(begin["challenge"].encode())),
+        },
+    )
+    assert resp.status == 401

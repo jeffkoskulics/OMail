@@ -108,6 +108,46 @@ def test_sovereign_key_rows_reads_db_on_calling_thread(tmp_path):
     db.close()
 
 
+def test_operator_onion_key_is_persistent_and_independent(tmp_path):
+    """The private operator onion key is minted once, reloaded verbatim on
+    every boot (a changing address would break the operator's bookmark),
+    and is never the node's public identity key."""
+    from cryptography.hazmat.primitives import serialization as ser
+
+    from omail.cli import _operator_onion_keypair
+    from omail.db import Database
+    from omail.host import HostNode
+    from omail.upa import onion_address
+
+    db = Database(tmp_path / "omail.db")
+    host = HostNode(db, host_name="Op Test")
+
+    first = _operator_onion_keypair(db)
+    second = _operator_onion_keypair(db)
+
+    def raw(kp):
+        return kp.public_key.public_bytes(
+            ser.Encoding.Raw, ser.PublicFormat.Raw
+        )
+
+    assert raw(first) == raw(second)                  # persisted, not re-minted
+    assert onion_address(first.public_key) != host.onion  # unlinkable to public
+    db.close()
+
+    # Survives a full node restart (fresh Database over the same file)
+    db2 = Database(tmp_path / "omail.db")
+    third = _operator_onion_keypair(db2)
+    assert raw(third) == raw(first)
+    db2.close()
+
+
+def test_parser_private_onion_flag():
+    args = build_parser().parse_args([])
+    assert args.no_private_onion is False
+    args = build_parser().parse_args(["--no-private-onion"])
+    assert args.no_private_onion is True
+
+
 def test_tor_error_hints_cover_auth_failures():
     from stem import SocketError
     from stem.connection import IncorrectPassword, MissingPassword

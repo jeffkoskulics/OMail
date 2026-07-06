@@ -401,6 +401,7 @@
       showWelcome();
     } catch (err) {
       setStatus(`Registration failed: ${err.message}`, true);
+      revealDeviceFallback();
     }
   }
 
@@ -422,7 +423,98 @@
       await enterMailbox();
     } catch (err) {
       setStatus(`Sign-in failed: ${err.message}`, true);
+      revealDeviceFallback();
     }
+  }
+
+  // Device-key fallback: for browsers where WebAuthn is unavailable or
+  // blocked (Tor Browser; Chromium on plain-http .onion origins). An
+  // Ed25519 key generated and kept in this browser profile signs a server
+  // challenge. Strictly weaker than a passkey — the UI says so.
+  const DEVICE_KEY_STORAGE = "omail-device-key";
+
+  const { nacl } = globalThis.OMailVendor;
+
+  function deviceKeyPair(create) {
+    let stored = localStorage.getItem(DEVICE_KEY_STORAGE);
+    if (!stored) {
+      if (!create) return null;
+      stored = C.b64(C.randomBytes(32));
+      localStorage.setItem(DEVICE_KEY_STORAGE, stored);
+    }
+    return nacl.sign.keyPair.fromSeed(C.unb64(stored));
+  }
+
+  function signChallenge(pair, challenge) {
+    return C.b64(
+      nacl.sign.detached(new TextEncoder().encode(challenge), pair.secretKey),
+    );
+  }
+
+  async function deviceRegister() {
+    const sure = confirm(
+      "Create a DEVICE-KEY identity?\n\nNo passkey will protect this " +
+      "account. A key stored in this browser profile becomes your only " +
+      "way in — clearing site data or losing this device deletes the " +
+      "identity permanently.",
+    );
+    if (!sure) return;
+    try {
+      setStatus("Creating your device-key identity…", true);
+      const begin = await api("/api/devicekey/register/begin", { json: {} });
+      const pair = deviceKeyPair(true);
+      const idSeed = C.randomBytes(32);
+      const identity = C.identityFromSeed(idSeed);
+      const info = await api("/api/devicekey/register/complete", {
+        json: {
+          ceremony: begin.ceremony,
+          device_pub: C.b64(pair.publicKey),
+          signature: signChallenge(pair, begin.challenge),
+          identity_pub: C.b64(identity.edPub),
+        },
+      });
+      state.me = info;
+      state.vaultKey = fallbackVaultKey();
+      state.vault = newVault(idSeed);
+      await saveVault();
+      await publishPrekeys();
+      setStatus("Signed in with a device key — this browser profile holds your only credentials.", true);
+      await enterMailbox();
+      showWelcome();
+    } catch (err) {
+      setStatus(`Device-key registration failed: ${err.message}`, true);
+    }
+  }
+
+  async function deviceLogin() {
+    try {
+      const pair = deviceKeyPair(false);
+      if (!pair) {
+        setStatus("No device key in this browser — create an identity first.", true);
+        return;
+      }
+      setStatus("Signing in with this browser's device key…", true);
+      const begin = await api("/api/devicekey/login/begin", { json: {} });
+      const info = await api("/api/devicekey/login/complete", {
+        json: {
+          ceremony: begin.ceremony,
+          device_pub: C.b64(pair.publicKey),
+          signature: signChallenge(pair, begin.challenge),
+        },
+      });
+      state.me = info;
+      state.vaultKey = fallbackVaultKey();
+      await loadVault();
+      setStatus("");
+      await enterMailbox();
+    } catch (err) {
+      setStatus(`Device-key sign-in failed: ${err.message}`, true);
+    }
+  }
+
+  function revealDeviceFallback() {
+    $("#fallback-cta").classList.remove("hidden");
+    $("#fallback-note").classList.remove("hidden");
   }
 
   async function logout() {
@@ -504,6 +596,8 @@
 
     $("#btn-register").addEventListener("click", register);
     $("#btn-login").addEventListener("click", login);
+    $("#btn-register-device").addEventListener("click", deviceRegister);
+    $("#btn-login-device").addEventListener("click", deviceLogin);
     $("#compose").addEventListener("submit", sendCurrent);
     $("#btn-migrate").addEventListener("click", migrate);
     $("#welcome-continue").addEventListener("click", () => {
@@ -539,9 +633,14 @@
     });
 
     if (!window.PublicKeyCredential) {
-      setStatus("This browser lacks WebAuthn — passkeys are the only way into OMail.", true);
+      setStatus("This browser lacks WebAuthn — you can continue with a device key instead.", true);
       $("#btn-register").disabled = true;
       $("#btn-login").disabled = true;
+      revealDeviceFallback();
+    } else if (localStorage.getItem(DEVICE_KEY_STORAGE)) {
+      // A device key exists from a previous fallback session; keep the
+      // door visible so its owner can sign back in.
+      revealDeviceFallback();
     }
     show("#auth-view");
     renderSession();

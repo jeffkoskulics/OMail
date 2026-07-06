@@ -42,6 +42,16 @@
         <button id="btn-register" class="primary">Create identity with a passkey</button>
         <button id="btn-login">Sign in with your passkey</button>
       </div>
+      <div class="cta hidden" id="fallback-cta">
+        <button id="btn-register-device">Create identity with a device key</button>
+        <button id="btn-login-device">Sign in with this browser's device key</button>
+      </div>
+      <p id="fallback-note" class="status hidden">
+        Device-key mode: your credentials live in <strong>this browser
+        profile only</strong>. Clearing site data (or losing this device)
+        permanently deletes the identity. Use a passkey-capable browser
+        for hardware-backed security when you can.
+      </p>
       <p id="auth-status" class="status"></p>
       <ul class="tenets">
         <li><strong>Zero knowledge:</strong> your keys are encrypted with a secret that never leaves your authenticator (WebAuthn PRF).</li>

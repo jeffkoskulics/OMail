@@ -89,9 +89,31 @@ scripts/browser_e2e.js Playwright E2E (virtual CTAP2 authenticator with PRF)
 ## Testing
 
 ```bash
-pytest                          # full suite (JS interop auto-skips without node)
-node scripts/browser_e2e.js     # headless-Chromium end-to-end portal test
+pytest                              # full suite (JS interop auto-skips without node)
+node scripts/browser_e2e.js         # passkey portal E2E (virtual CTAP2 + PRF)
+node scripts/browser_e2e_devicekey.js  # device-key fallback E2E (no WebAuthn)
 ```
+
+## Authentication
+
+Passkeys (WebAuthn/FIDO2) are the primary, hardware-backed path. Where a
+browser has no WebAuthn at all — Tor Browser, or Chromium on a plain-http
+`.onion` origin, which blocks WebAuthn as a "TLS certificate error" — the
+portal offers a **device-key fallback**: the browser generates an Ed25519
+key, keeps it in that browser profile, and authenticates by signing a
+server challenge. It is strictly weaker than a passkey (the key is only as
+safe as the browser profile) and the UI says so; it exists so onion users
+are never locked out.
+
+## Operator private onion
+
+Alongside the public onion address (the one embedded in UPAs and shared
+with contacts), each host also publishes a second, **unlisted operator
+onion** that serves the same portal. Its key is generated once and
+persisted, so the address is stable across restarts, and it is never
+printed in QR codes or embedded in any UPA. Use it as your private door
+to administer the mailbox even if the public address is being flooded.
+Disable it with `--no-private-onion`.
 
 ## Security notes (prototype)
 
@@ -100,7 +122,8 @@ node scripts/browser_e2e.js     # headless-Chromium end-to-end portal test
   archives are client-encrypted.
 - Browsers keep decrypted material in memory for the session; the PRF
   fallback path (authenticators without PRF) stores a device-local key and
-  says so loudly in the UI.
+  says so loudly in the UI. The device-key auth fallback is weaker still —
+  no hardware binding — and is meant for browsers that cannot do WebAuthn.
 - Remote host-to-host federation over Tor is scaffolded (`queued-remote`)
   but not yet transported.
 - Tor requires onion service private keys server-side; full sovereignty

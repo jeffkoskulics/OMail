@@ -20,6 +20,7 @@ from importlib import resources
 from typing import Dict, Optional, Set
 
 from aiohttp import WSMsgType, web
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from omail.db import Database
 from omail.host import HostNode
@@ -29,6 +30,10 @@ from omail.webauthn import PasskeyManager, new_handle
 
 SESSION_COOKIE = "omail_session"
 CEREMONY_TTL = 300.0
+
+# Device-key credentials share the credentials table with passkeys; the
+# prefix keeps their IDs disjoint from WebAuthn credential IDs.
+DEVICE_CRED_PREFIX = b"device-key:"
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -62,6 +67,10 @@ def create_app(
     app.router.add_post("/api/webauthn/register/complete", register_complete)
     app.router.add_post("/api/webauthn/login/begin", login_begin)
     app.router.add_post("/api/webauthn/login/complete", login_complete)
+    app.router.add_post("/api/devicekey/register/begin", device_register_begin)
+    app.router.add_post("/api/devicekey/register/complete", device_register_complete)
+    app.router.add_post("/api/devicekey/login/begin", device_login_begin)
+    app.router.add_post("/api/devicekey/login/complete", device_login_complete)
     app.router.add_post("/api/logout", logout)
     app.router.add_get("/api/me", me)
     app.router.add_get("/api/vault", vault_get)
@@ -273,6 +282,105 @@ async def login_complete(request: web.Request) -> web.Response:
         return _json_error(401, f"Authentication failed: {exc}")
 
     db.update_sign_count(raw_id, stored["sign_count"] + 1)
+    user = db.get_user(stored["user_id"])
+    token = db.create_auth_session(user["id"])
+    response = web.json_response({"token": token, **_user_json(user, host, db)})
+    _set_session(response, token)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Device-key fallback (browsers where WebAuthn is unavailable or blocked —
+# e.g. Tor Browser, or plain-http .onion origins in Chromium). The browser
+# generates an Ed25519 key, keeps it locally, and authenticates by signing
+# a server challenge. Strictly weaker than a passkey: the key is only as
+# safe as the browser profile, and the UI says so loudly.
+# ---------------------------------------------------------------------------
+
+def _verify_device_signature(device_pub: bytes, signature: bytes,
+                             challenge: str) -> None:
+    if len(device_pub) != 32:
+        raise ValueError("Device key must be a raw 32-byte Ed25519 public key")
+    ed25519.Ed25519PublicKey.from_public_bytes(device_pub).verify(
+        signature, challenge.encode()
+    )
+
+
+async def device_register_begin(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    handle = new_handle()
+    while db.get_user_by_handle(handle):
+        handle = new_handle()
+    challenge = secrets.token_urlsafe(32)
+    token = _store_ceremony(
+        request, "device-register", {"challenge": challenge}, handle=handle
+    )
+    return web.json_response(
+        {"ceremony": token, "handle": handle, "challenge": challenge}
+    )
+
+
+async def device_register_complete(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    ceremony = _take_ceremony(request, body.get("ceremony", ""), "device-register")
+    if ceremony is None:
+        return _json_error(400, "Unknown or expired ceremony")
+    try:
+        device_pub = base64.b64decode(body["device_pub"])
+        signature = base64.b64decode(body["signature"])
+        identity_pub = base64.b64decode(body["identity_pub"])
+        _verify_device_signature(
+            device_pub, signature, ceremony["state"]["challenge"]
+        )
+        upa = host.user_upa(identity_pub)
+    except Exception as exc:
+        return _json_error(400, f"Registration failed: {exc}")
+
+    cred_id = DEVICE_CRED_PREFIX + device_pub
+    if db.get_credential(cred_id) is not None:
+        return _json_error(409, "This device key is already registered")
+    user_id = db.create_user(ceremony["handle"], upa, identity_pub)
+    db.add_credential(user_id, cred_id, device_pub, 0)
+    host.bootstrap_contact(user_id)
+    token = db.create_auth_session(user_id)
+    request.app["announce"](
+        f"[users] new tenant {ceremony['handle']} onboarded "
+        "(device-key fallback, zero data)"
+    )
+    response = web.json_response(
+        {"token": token, **_user_json(db.get_user(user_id), host, db)}
+    )
+    _set_session(response, token)
+    return response
+
+
+async def device_login_begin(request: web.Request) -> web.Response:
+    challenge = secrets.token_urlsafe(32)
+    token = _store_ceremony(request, "device-login", {"challenge": challenge})
+    return web.json_response({"ceremony": token, "challenge": challenge})
+
+
+async def device_login_complete(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    ceremony = _take_ceremony(request, body.get("ceremony", ""), "device-login")
+    if ceremony is None:
+        return _json_error(400, "Unknown or expired ceremony")
+    try:
+        device_pub = base64.b64decode(body["device_pub"])
+        signature = base64.b64decode(body["signature"])
+        _verify_device_signature(
+            device_pub, signature, ceremony["state"]["challenge"]
+        )
+    except Exception as exc:
+        return _json_error(401, f"Authentication failed: {exc}")
+
+    stored = db.get_credential(DEVICE_CRED_PREFIX + device_pub)
+    if stored is None:
+        return _json_error(401, "Unknown device key")
     user = db.get_user(stored["user_id"])
     token = db.create_auth_session(user["id"])
     response = web.json_response({"token": token, **_user_json(user, host, db)})

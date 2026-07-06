@@ -6,3 +6,7 @@ data/
 .coverage
 *.egg-info/
 node_modules/
+
+# browser E2E screenshot artifacts
+scripts/portal.png
+scripts/migrate.png

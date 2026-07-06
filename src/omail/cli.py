@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "not needed when torrc uses CookieAuthentication 1)")
     parser.add_argument("--no-tor", action="store_true",
                         help="development mode: skip the Tor Hidden Service")
+    parser.add_argument("--no-private-onion", action="store_true",
+                        help="skip the operator-only private onion address")
     parser.add_argument("--version", action="version",
                         version=f"omail {__version__}")
     return parser
@@ -124,6 +126,30 @@ def _start_onion(host_kp: KeyPair, args) -> OnionService:
     )
     service.start()
     return service
+
+
+def _operator_onion_keypair(db: Database) -> KeyPair:
+    """Loads (or mints and persists) the host's private operator onion key.
+
+    This key is independent of the node's public identity: the resulting
+    .onion address serves the same portal but is never embedded in UPAs,
+    printed QR codes, or shared with contacts. It is the operator's
+    unlisted door — unlinkable to the public address, and still open if
+    the public endpoint is being flooded or blocked.
+
+    Must run on the thread that owns the SQLite connection.
+    """
+    from cryptography.hazmat.primitives import serialization as ser
+
+    kp = KeyPair()
+    pem = db.get_config("private_onion_key")
+    if pem:
+        kp.private_key = ser.load_pem_private_key(pem.encode(), password=None)
+        kp.public_key = kp.private_key.public_key()
+    else:
+        kp.generate_key_pair()
+        db.set_config("private_onion_key", kp.get_private_str())
+    return kp
 
 
 def _sovereign_key_rows(db: Database) -> list:
@@ -199,6 +225,7 @@ async def serve(args) -> int:
     local_url = f"http://127.0.0.1:{args.port}"
     services = []
     tor_live = False
+    private_onion = None
     if args.no_tor:
         status("tor hidden service  : SKIPPED (--no-tor); portal is local-only")
     else:
@@ -215,6 +242,20 @@ async def serve(args) -> int:
             for hint in _tor_error_hints(exc, args.control_port):
                 status(f"  {hint}")
             status("continuing local-only; fix Tor and restart to go dark")
+        if tor_live and not args.no_private_onion:
+            try:
+                # Key I/O happens here on the event-loop thread (SQLite);
+                # only the stem/Tor network call runs in the executor.
+                operator_kp = _operator_onion_keypair(db)
+                private_service = await loop.run_in_executor(
+                    None, _start_onion, operator_kp, args
+                )
+                services.append(("operator", private_service))
+                private_onion = f"{private_service.service_id}.onion"
+                status(f"private operator    : LIVE at {private_onion} (unlisted — never share)")
+            except Exception as exc:
+                status(f"private operator    : FAILED ({exc})")
+                status("public host service is unaffected and remains LIVE")
         if tor_live:
             try:
                 # SQLite reads happen here on the event-loop thread; only
@@ -237,6 +278,10 @@ async def serve(args) -> int:
         print(f"\n      {onion_url}\n")
         print("  Bookmark it — there is no clearnet fallback. Scan to open:\n")
         print(render_ascii(onion_url))
+        if private_onion:
+            print("  Operator-only private address (same portal, unlisted;")
+            print("  bookmark privately, NEVER share or publish):\n")
+            print(f"      http://{private_onion}\n")
     else:
         print(f"  The {host.host_name} OMail portal is LOCAL-ONLY right now:")
         print(f"\n      {local_url}\n")
