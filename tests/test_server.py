@@ -1193,3 +1193,70 @@ async def test_device_link_devicekey_variant_and_guards(client):
         "/api/devices/link/claim/devicekey/begin", json={"link_id": "nope"}
     )
     assert resp.status == 404
+
+
+# ---------------------------------------------------------------------------
+# Portal fallback: a bare UPA opened directly in a browser (see server.py's
+# portal_fallback). This is the real-world case where someone shares "just
+# the address" rather than a full URL -- the natural way peer UPAs work.
+# ---------------------------------------------------------------------------
+
+async def test_bare_guest_invite_link_redirects_to_claim(client, host):
+    alice = await _new_user(client)
+    invite = await (await client.post(
+        "/api/guests", json={"label": "Bob"}, headers=alice.headers
+    )).json()
+    path = invite["inbound_upa"].split("/", 1)[1]
+
+    resp = await client.get(f"/{path}", allow_redirects=False)
+    assert resp.status == 302
+    assert resp.headers["Location"] == f"/?claim={invite['inbound_upa']}"
+
+
+async def test_bare_claimed_guest_link_shows_explainer_not_redirect(client, host):
+    alice = await _new_user(client)
+    invite = await (await client.post(
+        "/api/guests", json={"label": "Bob"}, headers=alice.headers
+    )).json()
+    identity_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    origin = f"http://{client.host}:{client.port}"
+    auth = SoftAuthenticator(client.host, origin)
+    begin = await (await client.post(
+        "/api/guests/claim/webauthn/begin",
+        json={"inbound_upa": invite["inbound_upa"]},
+    )).json()
+    credential = auth.create(begin["options"])
+    await client.post(
+        "/api/guests/claim/webauthn/complete",
+        json={"ceremony": begin["ceremony"], "credential": credential,
+              "identity_pub": _b64(identity_pub)},
+    )
+
+    # Once claimed, the same bare link is no longer a live invite -- explain
+    # instead of redirecting into a claim flow that would now 410.
+    path = invite["inbound_upa"].split("/", 1)[1]
+    resp = await client.get(f"/{path}", allow_redirects=False)
+    assert resp.status == 404
+    assert "not a webpage" in (await resp.text()).lower()
+
+
+async def test_bare_identity_upa_shows_explainer(client):
+    """Your own UPA (Show my QR) and peer-invite UPAs (Create invite) are
+    bearer addresses meant to be pasted into someone else's client -- opening
+    them directly explains that instead of a bare 404."""
+    user = await _new_user(client)
+    path = user.info["upa"].split("/", 1)[1]
+    resp = await client.get(f"/{path}", allow_redirects=False)
+    assert resp.status == 404
+    body = (await resp.text()).lower()
+    assert "not a webpage" in body
+    assert "paste it into your" in body
+
+
+async def test_unmatched_path_that_is_not_a_upa_stays_a_plain_404(client):
+    resp = await client.get("/favicon.ico")
+    assert resp.status == 404
+    assert "not a webpage" not in (await resp.text()).lower()

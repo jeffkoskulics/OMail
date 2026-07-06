@@ -136,6 +136,9 @@ def create_app(
 
     static_dir = resources.files("omail") / "static"
     app.router.add_static("/static/", path=str(static_dir), name="static")
+
+    # Registered last so it only ever catches paths nothing above matched.
+    app.router.add_get("/{path:.+}", portal_fallback)
     return app
 
 
@@ -244,6 +247,44 @@ async def index(request: web.Request) -> web.Response:
 async def healthz(request: web.Request) -> web.Response:
     host: HostNode = request.app["host"]
     return web.json_response({"status": "ok", "onion": host.onion})
+
+
+_NOT_A_WEBPAGE_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Not a webpage — {host_name} OMail</title>
+<style>body{{font-family:sans-serif;max-width:40em;margin:4em auto;
+padding:0 1.5em;line-height:1.5}}code{{background:#eee;padding:.2em .4em;
+border-radius:3px;word-break:break-all}}</style></head><body>
+<h2>This is an address, not a webpage.</h2>
+<p><code>{upa}</code> is a User Privacy Address — a private routing
+address for OMail, not a page to load. Paste it into your <strong>own</strong>
+OMail client's "Accept invite" box to message this account; don't open it
+directly in a browser.</p>
+<p><a href="/">Open the {host_name} OMail portal</a></p>
+</body></html>"""
+
+
+async def portal_fallback(request: web.Request) -> web.Response:
+    """A UPA is a bearer address to paste into an OMail client, not a URL to
+    open — except a guest's invite, which IS meant to be opened directly.
+    People naturally share "just the address" (that's how peer UPAs work
+    too), so a bare, un-prefixed guest link should still work: redirect it
+    into the ?claim= flow. For anything else that merely looks like a valid
+    UPA on this host, explain instead of a bare 404."""
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    path = request.match_info.get("path", "")
+    upa = f"{host.onion}/{path}".strip().lower()
+    try:
+        parse_upa(upa)
+    except ValueError:
+        raise web.HTTPNotFound()
+
+    invite = db.get_guest_invite_by_upa(upa)
+    if invite is not None and invite["claimed_user_id"] is None:
+        raise web.HTTPFound(f"/?claim={upa}")
+
+    html = _NOT_A_WEBPAGE_HTML.format(upa=upa, host_name=host.host_name)
+    return web.Response(text=html, content_type="text/html", status=404)
 
 
 # ---------------------------------------------------------------------------
