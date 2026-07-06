@@ -503,6 +503,7 @@ def _relationship_json(row) -> dict:
         "label": row["label"],
         "inbound_upa": row["inbound_upa"],
         "outbound_upa": row["outbound_upa"],
+        "contact_id": row["contact_id"],
         "state": row["state"],
     }
 

@@ -24,6 +24,7 @@
     vaultKey: null,    // Uint8Array(32), PRF-derived
     vault: null,       // decrypted vault object
     contacts: [],
+    relByContact: {},  // contact_id -> relationship row
     activeContact: null,
     ratchets: {},      // upa -> TripleRatchet (live instances)
     unread: {},        // contact_id -> count
@@ -181,15 +182,80 @@
     const rel = await api("/api/relationships", {
       json: { label, slot_pub: C.b64(slot.edPub), bundles },
     });
+    storeRelationshipSlot(rel, seed, privates);
+    await saveVault();
+    return rel;
+  }
+
+  // Accept an invite someone shared out-of-band: mint our own reverse slot
+  // (kept in the vault), post it with the invite, and let the host run the
+  // connect handshake. A thread for this correspondent is created server-side.
+  async function acceptInvite(label, inviteUpa, count = 3) {
+    const seed = C.randomBytes(32);
+    const slot = C.identityFromSeed(seed);
+    const bundles = [];
+    const privates = [];
+    for (let i = 0; i < count; i++) {
+      const { bundle, keys } = await C.makePrekeyBundle(seed);
+      bundles.push(bundle);
+      privates.push(keys);
+    }
+    const rel = await api("/api/relationships/accept", {
+      json: { invite_upa: inviteUpa, label, slot_pub: C.b64(slot.edPub), bundles },
+    });
+    storeRelationshipSlot(rel, seed, privates);
+    await saveVault();
+    return rel;
+  }
+
+  // Store a minted slot's private material in the vault, keying each
+  // responder key by the server prekey id (so an inbound handshake envelope
+  // naming that prekey_id can be answered).
+  function storeRelationshipSlot(rel, seed, privates) {
     state.vault.relationships = state.vault.relationships || {};
+    const responderKeys = {};
+    (rel.prekey_ids || []).forEach((id, i) => { responderKeys[id] = privates[i]; });
     state.vault.relationships[rel.id] = {
       seed: C.b64(seed),
       inbound_upa: rel.inbound_upa,
-      label,
-      responder_keys: privates,
+      label: rel.label,
+      responder_keys: responderKeys,
     };
-    await saveVault();
-    return rel;
+  }
+
+  // Resolve the responder key for an inbound handshake prekey_id, scoped to
+  // the contact's relationship. Identity prekeys (user_prekeys) and
+  // relationship prekeys (relationship_prekeys) are separate id spaces that
+  // both start at 1, so a peer message must look ONLY in its own slot, never
+  // the flat identity map. Returns { keys, consume } or null.
+  function responderKeyFor(contact, prekeyId) {
+    const rel = state.relByContact[contact.id];
+    if (rel && state.vault.relationships[rel.id]) {
+      const rk = state.vault.relationships[rel.id].responder_keys || {};
+      if (rk[prekeyId] !== undefined) {
+        return { keys: rk[prekeyId], consume: () => { delete rk[prekeyId]; } };
+      }
+      return null;  // a peer slot never falls back to identity keys
+    }
+    if (state.vault.responder_keys[prekeyId] !== undefined) {
+      return {
+        keys: state.vault.responder_keys[prekeyId],
+        consume: () => { delete state.vault.responder_keys[prekeyId]; },
+      };
+    }
+    return null;
+  }
+
+  async function loadRelationships() {
+    try {
+      const rels = await api("/api/relationships");
+      state.relByContact = {};
+      for (const rel of rels) {
+        if (rel.contact_id != null) state.relByContact[rel.contact_id] = rel;
+      }
+    } catch (err) {
+      // relationships are optional context; ignore transient failures
+    }
   }
 
   async function publishPrekeys(count = 3) {
@@ -225,10 +291,10 @@
     const envelope = message.envelope;
     if (!state.ratchets[upa]) {
       if (!envelope.init) throw new Error("No session and no handshake blob");
-      const keys = state.vault.responder_keys[envelope.prekey_id];
-      if (!keys) throw new Error("Responder prekey not in vault");
-      state.ratchets[upa] = await C.TripleRatchet.respond(keys, envelope.init);
-      delete state.vault.responder_keys[envelope.prekey_id];
+      const found = responderKeyFor(contact, envelope.prekey_id);
+      if (!found) throw new Error("Responder prekey not in vault");
+      state.ratchets[upa] = await C.TripleRatchet.respond(found.keys, envelope.init);
+      found.consume();
     }
     const plaintext = td.decode(await state.ratchets[upa].decrypt(envelope));
     // Replace the transit envelope with a vault-encrypted archive: the
@@ -340,7 +406,8 @@
           appendMessage(message.direction, data.text, message.created_at);
         }
       } catch (err) {
-        systemMessage(`⚠ message ${message.id}: ${err.message}`);
+        console.error(`message ${message.id} failed`, err);
+        systemMessage(`⚠ message ${message.id}: ${err.message || err}`);
       }
     }
     if (vaultDirty) await saveVault();
@@ -393,6 +460,7 @@
 
   async function refreshContacts() {
     state.contacts = await api("/api/contacts");
+    await loadRelationships();
     renderContacts();
   }
 
@@ -673,15 +741,22 @@
     });
     $("#add-contact-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const name = $("#new-contact-name").value.trim();
+      const name = $("#new-contact-name").value.trim() || "Contact";
       const upa = $("#new-contact-upa").value.trim();
+      if (!upa) return;
+      const submit = event.target.querySelector("button[type=submit]");
+      submit.disabled = true;
       try {
-        await api("/api/contacts", { json: { name, upa } });
+        // Pasting an invite triggers the connect handshake with the sender's
+        // host and establishes the two-way relationship.
+        await acceptInvite(name, upa);
         $("#new-contact-name").value = "";
         $("#new-contact-upa").value = "";
         await refreshContacts();
       } catch (err) {
-        alert(`Could not add contact: ${err.message}`);
+        alert(`Could not accept invite: ${err.message}`);
+      } finally {
+        submit.disabled = false;
       }
     });
 
