@@ -160,7 +160,36 @@
       identity_seed: C.b64(identitySeed),
       ratchets: {},
       responder_keys: {},
+      relationships: {},   // rel_id -> { seed, inbound_upa, label, responder_keys }
     };
+  }
+
+  // Mint a per-relationship inbound slot: a fresh keypair (kept in the
+  // vault) plus public prekey bundles the peer can initiate against. The
+  // returned inbound_upa is the address to share out-of-band with this one
+  // correspondent. See docs/concepts.md.
+  async function createInvite(label, count = 3) {
+    const seed = C.randomBytes(32);
+    const slot = C.identityFromSeed(seed);
+    const bundles = [];
+    const privates = [];
+    for (let i = 0; i < count; i++) {
+      const { bundle, keys } = await C.makePrekeyBundle(seed);
+      bundles.push(bundle);
+      privates.push(keys);
+    }
+    const rel = await api("/api/relationships", {
+      json: { label, slot_pub: C.b64(slot.edPub), bundles },
+    });
+    state.vault.relationships = state.vault.relationships || {};
+    state.vault.relationships[rel.id] = {
+      seed: C.b64(seed),
+      inbound_upa: rel.inbound_upa,
+      label,
+      responder_keys: privates,
+    };
+    await saveVault();
+    return rel;
   }
 
   async function publishPrekeys(count = 3) {
@@ -610,6 +639,30 @@
     });
     $("#qr-close").addEventListener("click", () => {
       $("#qr-overlay").classList.add("hidden");
+    });
+    $("#btn-create-invite").addEventListener("click", () => {
+      $("#invite-label").value = "";
+      $("#invite-result").classList.add("hidden");
+      $("#invite-mint").disabled = false;
+      $("#invite-overlay").classList.remove("hidden");
+    });
+    $("#invite-close").addEventListener("click", () => {
+      $("#invite-overlay").classList.add("hidden");
+    });
+    $("#invite-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const label = $("#invite-label").value.trim();
+      if (!label) return;
+      $("#invite-mint").disabled = true;
+      try {
+        const rel = await createInvite(label);
+        $("#invite-upa").textContent = rel.inbound_upa;
+        renderQr($("#invite-qr"), rel.inbound_upa);
+        $("#invite-result").classList.remove("hidden");
+      } catch (err) {
+        alert(`Could not create invite: ${err.message}`);
+        $("#invite-mint").disabled = false;
+      }
     });
     document.querySelectorAll("button.copy").forEach((button) => {
       button.addEventListener("click", () => {

@@ -86,6 +86,7 @@
         <div class="me-handle" id="me-handle"></div>
         <div class="me-upa"><code id="me-upa"></code>
           <button class="copy" data-copy="#me-upa" title="Copy UPA">⧉</button></div>
+        <button id="btn-create-invite" class="ghost">✚ Create invite</button>
         <button id="btn-show-qr" class="ghost">Show my QR</button>
         <button id="btn-migrate" class="ghost">⚑ Become Your Own Host</button>
       </div>
@@ -119,6 +120,26 @@
       <p class="upa-box"><code id="qr-upa"></code></p>
       <div id="qr-code" class="qr"></div>
       <button class="primary" id="qr-close">Close</button>
+    </div>
+  </div>
+
+  <div id="invite-overlay" class="overlay hidden">
+    <div class="card">
+      <h3>Invite a contact</h3>
+      <p class="subtle">Name them (for your eyes only). OMail mints a private
+        address reserved just for this person — share it with them
+        out-of-band.</p>
+      <form id="invite-form">
+        <input id="invite-label" placeholder="Name (e.g. Bob)" autocomplete="off" required>
+        <button type="submit" class="primary" id="invite-mint">Create invite</button>
+      </form>
+      <div id="invite-result" class="hidden">
+        <p class="upa-box"><code id="invite-upa"></code>
+          <button class="copy" data-copy="#invite-upa" title="Copy UPA">⧉</button></p>
+        <div id="invite-qr" class="qr"></div>
+        <p class="subtle">Only this contact should ever hold this address.</p>
+      </div>
+      <button class="ghost" id="invite-close">Close</button>
     </div>
   </div>
 
