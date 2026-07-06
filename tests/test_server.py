@@ -873,3 +873,268 @@ async def test_relationship_federation_two_hosts(aiohttp_client):
 
     db_a.close()
     db_b.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: guest invites (see docs/concepts.md)
+# ---------------------------------------------------------------------------
+
+async def test_guest_invite_claim_via_passkey(client, host):
+    """Alice mints a guest invite; Charlie claims it with a passkey and the
+    result behaves like any tenant on Alice's host — same UPA before and
+    after claim, Administrator contact bootstrapped, sessions work."""
+    alice = await _new_user(client)
+
+    resp = await client.post(
+        "/api/guests", json={"label": "Charlie"}, headers=alice.headers
+    )
+    assert resp.status == 200, await resp.text()
+    invite = await resp.json()
+    assert invite["claimed"] is False
+    assert invite["inbound_upa"].startswith(host.onion + "/")
+    # A guest's inbound address is distinct from Alice's own identity UPA
+    assert invite["inbound_upa"] != alice.info["upa"]
+
+    listed = await (await client.get("/api/guests", headers=alice.headers)).json()
+    assert listed[0]["inbound_upa"] == invite["inbound_upa"]
+    assert listed[0]["claimed"] is False
+
+    # Charlie claims it with a (software) passkey
+    charlie_seed = _seed()
+    charlie_pub = ed25519.Ed25519PrivateKey.from_private_bytes(
+        charlie_seed
+    ).public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    origin = f"http://{client.host}:{client.port}"
+    auth = SoftAuthenticator(client.host, origin)
+
+    begin = await (await client.post(
+        "/api/guests/claim/webauthn/begin",
+        json={"inbound_upa": invite["inbound_upa"]},
+    )).json()
+    credential = auth.create(begin["options"])
+    resp = await client.post(
+        "/api/guests/claim/webauthn/complete",
+        json={"ceremony": begin["ceremony"], "credential": credential,
+              "identity_pub": _b64(charlie_pub)},
+    )
+    assert resp.status == 200, await resp.text()
+    info = await resp.json()
+    # The claimed account keeps the EXACT UPA Alice minted
+    assert info["upa"] == invite["inbound_upa"]
+    charlie_headers = {"Authorization": f"Bearer {info['token']}"}
+    # The response set Charlie's session cookie on the shared test client;
+    # clear it so later Authorization-header calls aren't shadowed by it
+    # (mirrors what PortalUser.register/login do for the same reason).
+    client.session.cookie_jar.clear()
+
+    contacts = await (
+        await client.get("/api/contacts", headers=charlie_headers)
+    ).json()
+    assert contacts[0]["name"] == "Administrator"
+
+    listed = await (await client.get("/api/guests", headers=alice.headers)).json()
+    assert listed[0]["claimed"] is True
+
+
+async def test_guest_invite_single_use(client, host):
+    alice = await _new_user(client)
+    invite = await (await client.post(
+        "/api/guests", json={"label": "Charlie"}, headers=alice.headers
+    )).json()
+
+    origin = f"http://{client.host}:{client.port}"
+    auth1 = SoftAuthenticator(client.host, origin)
+    begin = await (await client.post(
+        "/api/guests/claim/webauthn/begin",
+        json={"inbound_upa": invite["inbound_upa"]},
+    )).json()
+    credential = auth1.create(begin["options"])
+    identity_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    resp = await client.post(
+        "/api/guests/claim/webauthn/complete",
+        json={"ceremony": begin["ceremony"], "credential": credential,
+              "identity_pub": _b64(identity_pub)},
+    )
+    assert resp.status == 200
+
+    # A second claim attempt against the same invite is rejected
+    resp = await client.post(
+        "/api/guests/claim/webauthn/begin",
+        json={"inbound_upa": invite["inbound_upa"]},
+    )
+    assert resp.status == 410
+
+    # Unknown invite
+    resp = await client.post(
+        "/api/guests/claim/webauthn/begin",
+        json={"inbound_upa": host.user_upa(b"\x09" * 32)},
+    )
+    assert resp.status == 404
+
+
+async def test_guest_invite_claim_via_devicekey(client, host):
+    alice = await _new_user(client)
+    invite = await (await client.post(
+        "/api/guests", json={"label": "Charlie"}, headers=alice.headers
+    )).json()
+
+    priv = ed25519.Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    identity_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    begin = await (await client.post(
+        "/api/guests/claim/devicekey/begin",
+        json={"inbound_upa": invite["inbound_upa"]},
+    )).json()
+    signature = priv.sign(begin["challenge"].encode())
+    resp = await client.post(
+        "/api/guests/claim/devicekey/complete",
+        json={"ceremony": begin["ceremony"], "device_pub": _b64(pub),
+              "signature": _b64(signature), "identity_pub": _b64(identity_pub)},
+    )
+    assert resp.status == 200, await resp.text()
+    info = await resp.json()
+    assert info["upa"] == invite["inbound_upa"]
+
+    # Login again with the same device key works normally (existing flow)
+    login_begin = await (
+        await client.post("/api/devicekey/login/begin", json={})
+    ).json()
+    resp = await client.post(
+        "/api/devicekey/login/complete",
+        json={"ceremony": login_begin["ceremony"], "device_pub": _b64(pub),
+              "signature": _b64(priv.sign(login_begin["challenge"].encode()))},
+    )
+    assert resp.status == 200
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: credentials list + multi-device linking
+# ---------------------------------------------------------------------------
+
+async def test_credentials_list(client):
+    user = await _new_user(client)
+    creds = await (
+        await client.get("/api/credentials", headers=user.headers)
+    ).json()
+    assert len(creds) == 1
+    assert creds[0]["kind"] == "passkey"
+
+
+async def test_device_link_webauthn_to_webauthn(client):
+    """Device A (passkey) links Device B (also passkey): the parcel round
+    trips as opaque ciphertext and Device B ends up with its own credential
+    on the SAME account."""
+    alice = await _new_user(client)
+
+    begin = await (
+        await client.post("/api/devices/link/begin", json={}, headers=alice.headers)
+    ).json()
+    link_id = begin["link_id"]
+
+    # Device A encrypts a parcel with a link_secret only it and Device B
+    # know (simulated here as a fixed 32-byte value); the server never sees
+    # it in plaintext or the key.
+    parcel = {"iv": "sim-iv", "ct": "sim-ciphertext-of-vault"}
+    resp = await client.post(
+        "/api/devices/link/deliver",
+        json={"link_id": link_id, "parcel": parcel},
+        headers=alice.headers,
+    )
+    assert resp.status == 200
+
+    # Device B fetches it (no auth) and gets the opaque blob back verbatim
+    fetched = await (
+        await client.get("/api/devices/link/fetch", params={"link_id": link_id})
+    ).json()
+    assert fetched == {"ready": True, "parcel": parcel}
+
+    # Device B completes its own passkey ceremony against the link
+    origin = f"http://{client.host}:{client.port}"
+    auth_b = SoftAuthenticator(client.host, origin)
+    claim_begin = await (await client.post(
+        "/api/devices/link/claim/webauthn/begin", json={"link_id": link_id}
+    )).json()
+    credential = auth_b.create(claim_begin["options"])
+    resp = await client.post(
+        "/api/devices/link/claim/webauthn/complete",
+        json={"ceremony": claim_begin["ceremony"], "credential": credential},
+    )
+    assert resp.status == 200, await resp.text()
+    info = await resp.json()
+    assert info["upa"] == alice.info["upa"]  # same account, new device
+
+    creds = await (
+        await client.get("/api/credentials", headers=alice.headers)
+    ).json()
+    assert len(creds) == 2  # original passkey + the linked device's
+
+    # The link is single-use
+    resp = await client.get(
+        "/api/devices/link/fetch", params={"link_id": link_id}
+    )
+    assert resp.status == 410
+
+
+async def test_device_link_devicekey_variant_and_guards(client):
+    alice = await _new_user(client)
+    begin = await (
+        await client.post("/api/devices/link/begin", json={}, headers=alice.headers)
+    ).json()
+    link_id = begin["link_id"]
+
+    # Fetch before any parcel delivered
+    pending = await (
+        await client.get("/api/devices/link/fetch", params={"link_id": link_id})
+    ).json()
+    assert pending == {"ready": False}
+
+    # A different user cannot deliver to someone else's link
+    bob = await _new_user(client)
+    resp = await client.post(
+        "/api/devices/link/deliver",
+        json={"link_id": link_id, "parcel": {"iv": "x", "ct": "y"}},
+        headers=bob.headers,
+    )
+    assert resp.status == 404
+
+    await client.post(
+        "/api/devices/link/deliver",
+        json={"link_id": link_id, "parcel": {"iv": "x", "ct": "y"}},
+        headers=alice.headers,
+    )
+
+    priv = ed25519.Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    claim_begin = await (await client.post(
+        "/api/devices/link/claim/devicekey/begin", json={"link_id": link_id}
+    )).json()
+    signature = priv.sign(claim_begin["challenge"].encode())
+    resp = await client.post(
+        "/api/devices/link/claim/devicekey/complete",
+        json={"ceremony": claim_begin["ceremony"], "device_pub": _b64(pub),
+              "signature": _b64(signature)},
+    )
+    assert resp.status == 200, await resp.text()
+    info = await resp.json()
+    assert info["upa"] == alice.info["upa"]
+
+    # Unknown link_id
+    resp = await client.post(
+        "/api/devices/link/claim/devicekey/begin", json={"link_id": "nope"}
+    )
+    assert resp.status == 404

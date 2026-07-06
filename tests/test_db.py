@@ -199,3 +199,40 @@ def test_persistence_across_connections(tmp_path):
     db2 = Database(path)
     assert db2.get_user(uid)["handle"] == "user-x"
     db2.close()
+
+
+def test_guest_invite_lifecycle(db, user_id):
+    inv_id = db.create_guest_invite(user_id, "Charlie", "alice.onion/charlieslot")
+    assert db.get_guest_invite_by_upa("alice.onion/charlieslot")["id"] == inv_id
+    assert db.get_guest_invite_by_upa("nope.onion/x") is None
+    listed = db.list_guest_invites(user_id)
+    assert len(listed) == 1
+    assert listed[0]["claimed_user_id"] is None
+
+    charlie_id = db.create_user(
+        "user-charlie", "alice.onion/charlieslot", b"\x02" * 32, guest=True
+    )
+    db.claim_guest_invite(inv_id, charlie_id)
+    claimed = db.get_guest_invite_by_upa("alice.onion/charlieslot")
+    assert claimed["claimed_user_id"] == charlie_id
+    assert db.get_user(charlie_id)["guest"] == 1
+
+
+def test_device_link_lifecycle(db, user_id):
+    db.create_device_link("link-abc", user_id, ttl_seconds=300)
+    link = db.get_device_link("link-abc")
+    assert link["user_id"] == user_id
+    assert link["parcel"] is None
+    assert link["consumed_user_id"] is None
+
+    db.set_device_link_parcel("link-abc", "opaque-ciphertext")
+    assert db.get_device_link("link-abc")["parcel"] == "opaque-ciphertext"
+
+    other_user = db.create_user("user-other", "host.onion/other", b"\x03" * 32)
+    db.consume_device_link("link-abc", other_user)
+    assert db.get_device_link("link-abc")["consumed_user_id"] == other_user
+
+
+def test_device_link_expiry(db, user_id):
+    db.create_device_link("link-old", user_id, ttl_seconds=-1)  # already expired
+    assert db.get_device_link("link-old") is None

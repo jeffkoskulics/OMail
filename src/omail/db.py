@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
     upa          TEXT NOT NULL UNIQUE,
     identity_pub BLOB NOT NULL,              -- raw Ed25519 public key
     sovereign    INTEGER NOT NULL DEFAULT 0, -- 1 after self-hosting migration
+    guest        INTEGER NOT NULL DEFAULT 0, -- 1 for a hosted non-OMail correspondent
     created_at   REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS credentials (
@@ -111,6 +112,34 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );
+-- Guest invites (see docs/concepts.md): a host mints a guest's single UPA
+-- ahead of time. inbound_upa is a claim capability AND, once claimed, the
+-- guest's permanent routing address -- both the same string, since Alice
+-- shares it once and it must keep working after Charlie claims it. Whoever
+-- first presents it completes the one registration ceremony that becomes
+-- the guest's permanent credential; claimed_user_id then blocks re-claiming.
+CREATE TABLE IF NOT EXISTS guest_invites (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    inviter_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label           TEXT NOT NULL,
+    inbound_upa     TEXT NOT NULL UNIQUE,
+    claimed_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at      REAL NOT NULL
+);
+-- Multi-device linking: an already-authenticated device creates a pending
+-- link and uploads an encrypted parcel (vault contents encrypted client-side
+-- with a link_secret transmitted only via the out-of-band QR/URL fragment,
+-- never seen by the server). The new device fetches the opaque parcel,
+-- decrypts it locally, then registers its own credential against link_id.
+-- Single-use and short-lived; consumed_user_id set once claimed.
+CREATE TABLE IF NOT EXISTS device_links (
+    id              TEXT PRIMARY KEY,        -- link_id, opaque random token
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    parcel          TEXT,                    -- opaque ciphertext, set by the source device
+    consumed_user_id INTEGER,                -- non-null once a new device has claimed it
+    created_at      REAL NOT NULL,
+    expires_at      REAL NOT NULL
+);
 """
 
 
@@ -131,17 +160,24 @@ class Database:
     def _migrate(self) -> None:
         """Idempotent, additive column migrations for DBs created by an
         earlier schema version (no destructive changes)."""
-        cols = {
+        rel_cols = {
             r["name"]
             for r in self.conn.execute("PRAGMA table_info(relationships)")
         }
-        if "contact_id" in cols:
-            return
-        # relationships predates the contact_id link (added in Phase 2)
-        self.conn.execute(
-            "ALTER TABLE relationships ADD COLUMN contact_id INTEGER "
-            "REFERENCES contacts(id) ON DELETE SET NULL"
-        )
+        if "contact_id" not in rel_cols:
+            # relationships predates the contact_id link (added in Phase 2)
+            self.conn.execute(
+                "ALTER TABLE relationships ADD COLUMN contact_id INTEGER "
+                "REFERENCES contacts(id) ON DELETE SET NULL"
+            )
+        user_cols = {
+            r["name"] for r in self.conn.execute("PRAGMA table_info(users)")
+        }
+        if "guest" not in user_cols:
+            # users predates the guest flag (added in Phase 3)
+            self.conn.execute(
+                "ALTER TABLE users ADD COLUMN guest INTEGER NOT NULL DEFAULT 0"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -164,11 +200,13 @@ class Database:
 
     # -- users ------------------------------------------------------------
 
-    def create_user(self, handle: str, upa: str, identity_pub: bytes) -> int:
+    def create_user(
+        self, handle: str, upa: str, identity_pub: bytes, guest: bool = False
+    ) -> int:
         cur = self.conn.execute(
-            "INSERT INTO users (handle, upa, identity_pub, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (handle, upa, identity_pub, time.time()),
+            "INSERT INTO users (handle, upa, identity_pub, guest, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (handle, upa, identity_pub, int(guest), time.time()),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -526,4 +564,69 @@ class Database:
 
     def delete_auth_session(self, token: str) -> None:
         self.conn.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+        self.conn.commit()
+
+    # -- guest invites ------------------------------------------------------
+
+    def create_guest_invite(
+        self, inviter_id: int, label: str, inbound_upa: str
+    ) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO guest_invites (inviter_id, label, inbound_upa, "
+            "created_at) VALUES (?, ?, ?, ?)",
+            (inviter_id, label, inbound_upa, time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_guest_invite_by_upa(self, upa: str) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM guest_invites WHERE inbound_upa = ?", (upa,)
+        ).fetchone()
+
+    def list_guest_invites(self, inviter_id: int) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM guest_invites WHERE inviter_id = ? ORDER BY id",
+            (inviter_id,),
+        ).fetchall()
+
+    def claim_guest_invite(self, invite_id: int, user_id: int) -> None:
+        self.conn.execute(
+            "UPDATE guest_invites SET claimed_user_id = ? WHERE id = ?",
+            (user_id, invite_id),
+        )
+        self.conn.commit()
+
+    # -- device linking -------------------------------------------------------
+
+    def create_device_link(
+        self, link_id: str, user_id: int, ttl_seconds: float = 300
+    ) -> None:
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO device_links (id, user_id, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (link_id, user_id, now, now + ttl_seconds),
+        )
+        self.conn.commit()
+
+    def get_device_link(self, link_id: str) -> Optional[sqlite3.Row]:
+        row = self.conn.execute(
+            "SELECT * FROM device_links WHERE id = ?", (link_id,)
+        ).fetchone()
+        if row and row["expires_at"] < time.time():
+            return None
+        return row
+
+    def set_device_link_parcel(self, link_id: str, parcel: str) -> None:
+        self.conn.execute(
+            "UPDATE device_links SET parcel = ? WHERE id = ?", (parcel, link_id)
+        )
+        self.conn.commit()
+
+    def consume_device_link(self, link_id: str, user_id: int) -> None:
+        self.conn.execute(
+            "UPDATE device_links SET consumed_user_id = ? WHERE id = ?",
+            (user_id, link_id),
+        )
         self.conn.commit()

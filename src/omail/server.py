@@ -109,6 +109,20 @@ def create_app(
     app.router.add_get("/api/relationships", relationships_list)
     app.router.add_post("/api/relationships", relationships_create)
     app.router.add_post("/api/relationships/accept", relationships_accept)
+    app.router.add_post("/api/guests", guests_create)
+    app.router.add_get("/api/guests", guests_list)
+    app.router.add_post("/api/guests/claim/webauthn/begin", guest_claim_webauthn_begin)
+    app.router.add_post("/api/guests/claim/webauthn/complete", guest_claim_webauthn_complete)
+    app.router.add_post("/api/guests/claim/devicekey/begin", guest_claim_devicekey_begin)
+    app.router.add_post("/api/guests/claim/devicekey/complete", guest_claim_devicekey_complete)
+    app.router.add_get("/api/credentials", credentials_list)
+    app.router.add_post("/api/devices/link/begin", device_link_begin)
+    app.router.add_post("/api/devices/link/deliver", device_link_deliver)
+    app.router.add_get("/api/devices/link/fetch", device_link_fetch)
+    app.router.add_post("/api/devices/link/claim/webauthn/begin", device_link_claim_webauthn_begin)
+    app.router.add_post("/api/devices/link/claim/webauthn/complete", device_link_claim_webauthn_complete)
+    app.router.add_post("/api/devices/link/claim/devicekey/begin", device_link_claim_devicekey_begin)
+    app.router.add_post("/api/devices/link/claim/devicekey/complete", device_link_claim_devicekey_complete)
     app.router.add_post("/api/federation/connect", federation_connect)
     app.router.add_get("/api/federation/bundle", federation_bundle)
     app.router.add_post("/api/federation/deliver", federation_deliver)
@@ -441,6 +455,181 @@ async def me(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Credentials & multi-device linking.
+#
+# Copying an identity to a new device is a deliberate, explicit action, not
+# a side effect of re-presenting any invite: the already-authenticated
+# device creates a short-lived link and uploads an encrypted parcel (vault
+# contents encrypted client-side with a link_secret transmitted only via the
+# out-of-band QR/URL fragment — the server never sees link_secret or
+# plaintext). The new device fetches the opaque parcel, decrypts it
+# locally, then registers its own credential bound to the link.
+# ---------------------------------------------------------------------------
+
+def _credential_json(row) -> dict:
+    raw = bytes(row["credential_id"])
+    is_device_key = raw.startswith(DEVICE_CRED_PREFIX)
+    return {
+        "id": base64.b64encode(raw).decode(),
+        "kind": "device-key" if is_device_key else "passkey",
+        "created_at": row["created_at"],
+    }
+
+
+async def credentials_list(request: web.Request) -> web.Response:
+    user = _require_user(request)
+    rows = request.app["db"].list_credentials(user["id"])
+    return web.json_response([_credential_json(r) for r in rows])
+
+
+async def device_link_begin(request: web.Request) -> web.Response:
+    user = _require_user(request)
+    db: Database = request.app["db"]
+    link_id = secrets.token_urlsafe(24)
+    db.create_device_link(link_id, user["id"])
+    return web.json_response({"link_id": link_id})
+
+
+async def device_link_deliver(request: web.Request) -> web.Response:
+    """The source device uploads the encrypted parcel once it has minted
+    the link. Restricted to the same user the link belongs to."""
+    user = _require_user(request)
+    db: Database = request.app["db"]
+    body = await request.json()
+    link_id = (body.get("link_id") or "").strip()
+    link = db.get_device_link(link_id)
+    if link is None or link["user_id"] != user["id"]:
+        return _json_error(404, "Unknown or expired link")
+    if link["consumed_user_id"] is not None:
+        return _json_error(409, "Link already used")
+    parcel = body.get("parcel")
+    if not isinstance(parcel, dict) or "ct" not in parcel or "iv" not in parcel:
+        return _json_error(400, "Parcel must be an encrypted blob")
+    db.set_device_link_parcel(link_id, json.dumps(parcel))
+    return web.json_response({"ok": True})
+
+
+async def device_link_fetch(request: web.Request) -> web.Response:
+    """Unauthenticated: the new device has no session yet. Gated by the
+    short-lived, single-use link_id; the parcel itself is opaque
+    ciphertext the server cannot decrypt."""
+    db: Database = request.app["db"]
+    link_id = (request.query.get("link_id") or "").strip()
+    link = db.get_device_link(link_id)
+    if link is None:
+        return _json_error(404, "Unknown or expired link")
+    if link["consumed_user_id"] is not None:
+        return _json_error(410, "Link already used")
+    if link["parcel"] is None:
+        return web.json_response({"ready": False})
+    return web.json_response({"ready": True, "parcel": json.loads(link["parcel"])})
+
+
+def _pending_link(db: Database, link_id: str):
+    link = db.get_device_link(link_id)
+    if link is None:
+        return None, _json_error(404, "Unknown or expired link")
+    if link["consumed_user_id"] is not None:
+        return None, _json_error(410, "Link already used")
+    return link, None
+
+
+async def device_link_claim_webauthn_begin(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    body = await request.json()
+    link_id = (body.get("link_id") or "").strip()
+    link, err = _pending_link(db, link_id)
+    if err:
+        return err
+    target = db.get_user(link["user_id"])
+    user_id_bytes = os.urandom(16)
+    options, state = _passkeys(request).begin_registration(target["handle"], user_id_bytes)
+    token = _store_ceremony(
+        request, "device-link-claim", state,
+        link_id=link_id, target_user_id=link["user_id"],
+    )
+    return web.json_response(
+        {"ceremony": token, "options": json.loads(json.dumps(options, default=str))}
+    )
+
+
+async def device_link_claim_webauthn_complete(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    ceremony = _take_ceremony(request, body.get("ceremony", ""), "device-link-claim")
+    if ceremony is None:
+        return _json_error(400, "Unknown or expired ceremony")
+    link, err = _pending_link(db, ceremony["link_id"])
+    if err:
+        return err
+    try:
+        cred_id, cred_blob, sign_count = _passkeys(request).complete_registration(
+            ceremony["state"], body["credential"]
+        )
+    except Exception as exc:
+        return _json_error(400, f"Registration failed: {exc}")
+
+    db.add_credential(link["user_id"], cred_id, cred_blob, sign_count)
+    db.consume_device_link(ceremony["link_id"], link["user_id"])
+    token = db.create_auth_session(link["user_id"])
+    response = web.json_response(
+        {"token": token, **_user_json(db.get_user(link["user_id"]), host, db)}
+    )
+    _set_session(response, token)
+    return response
+
+
+async def device_link_claim_devicekey_begin(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    body = await request.json()
+    link_id = (body.get("link_id") or "").strip()
+    link, err = _pending_link(db, link_id)
+    if err:
+        return err
+    challenge = secrets.token_urlsafe(32)
+    token = _store_ceremony(
+        request, "device-link-claim-device", {"challenge": challenge},
+        link_id=link_id, target_user_id=link["user_id"],
+    )
+    return web.json_response({"ceremony": token, "challenge": challenge})
+
+
+async def device_link_claim_devicekey_complete(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    ceremony = _take_ceremony(
+        request, body.get("ceremony", ""), "device-link-claim-device"
+    )
+    if ceremony is None:
+        return _json_error(400, "Unknown or expired ceremony")
+    link, err = _pending_link(db, ceremony["link_id"])
+    if err:
+        return err
+    try:
+        device_pub = base64.b64decode(body["device_pub"])
+        signature = base64.b64decode(body["signature"])
+        _verify_device_signature(
+            device_pub, signature, ceremony["state"]["challenge"]
+        )
+    except Exception as exc:
+        return _json_error(400, f"Authentication failed: {exc}")
+
+    cred_id = DEVICE_CRED_PREFIX + device_pub
+    if db.get_credential(cred_id) is not None:
+        return _json_error(409, "This device key is already registered")
+    db.add_credential(link["user_id"], cred_id, device_pub, 0)
+    db.consume_device_link(ceremony["link_id"], link["user_id"])
+    token = db.create_auth_session(link["user_id"])
+    response = web.json_response(
+        {"token": token, **_user_json(db.get_user(link["user_id"]), host, db)}
+    )
+    _set_session(response, token)
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Vault (PRF-encrypted key blobs — opaque to the host)
 # ---------------------------------------------------------------------------
 
@@ -583,6 +772,169 @@ async def relationships_accept(request: web.Request) -> web.Response:
     result["contact"] = {"id": contact_id, "name": label, "upa": invite_upa}
     result["prekey_ids"] = prekey_ids
     return web.json_response(result)
+
+
+# ---------------------------------------------------------------------------
+# Guests (see docs/concepts.md): a hosted non-OMail correspondent. The host
+# mints the guest's single UPA ahead of time as a claim capability; whoever
+# first presents it completes the one registration ceremony (passkey,
+# falling back to device-key) that becomes their permanent credential —
+# after that, the invite is spent and only the credential grants access.
+# ---------------------------------------------------------------------------
+
+def _guest_invite_json(row) -> dict:
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "inbound_upa": row["inbound_upa"],
+        "claimed": row["claimed_user_id"] is not None,
+    }
+
+
+async def guests_create(request: web.Request) -> web.Response:
+    """Mints a guest invite. The address bytes are opaque random data — not
+    a real Ed25519 point — since a guest's inbound UPA only needs to be a
+    validly checksummed, unlinkable capability; the guest's real Triple
+    Ratchet identity is generated in their own browser at claim time."""
+    user = _require_user(request)
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    label = (body.get("label") or "").strip() or "Guest"
+    inbound_upa = host.user_upa(os.urandom(32))
+    invite_id = db.create_guest_invite(user["id"], label, inbound_upa)
+    return web.json_response(
+        {"id": invite_id, "label": label, "inbound_upa": inbound_upa, "claimed": False}
+    )
+
+
+async def guests_list(request: web.Request) -> web.Response:
+    user = _require_user(request)
+    rows = request.app["db"].list_guest_invites(user["id"])
+    return web.json_response([_guest_invite_json(r) for r in rows])
+
+
+def _unclaimed_invite(db: Database, upa: str):
+    invite = db.get_guest_invite_by_upa(upa)
+    if invite is None:
+        return None, _json_error(404, "Unknown invite")
+    if invite["claimed_user_id"] is not None:
+        return None, _json_error(410, "This invite has already been claimed")
+    return invite, None
+
+
+async def guest_claim_webauthn_begin(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    body = await request.json()
+    upa = (body.get("inbound_upa") or "").strip().lower()
+    invite, err = _unclaimed_invite(db, upa)
+    if err:
+        return err
+    handle = new_handle()
+    while db.get_user_by_handle(handle):
+        handle = new_handle()
+    user_id_bytes = os.urandom(16)
+    options, state = _passkeys(request).begin_registration(handle, user_id_bytes)
+    token = _store_ceremony(
+        request, "guest-claim", state, handle=handle, inbound_upa=upa
+    )
+    return web.json_response(
+        {"ceremony": token, "handle": handle,
+         "options": json.loads(json.dumps(options, default=str))}
+    )
+
+
+async def guest_claim_webauthn_complete(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    ceremony = _take_ceremony(request, body.get("ceremony", ""), "guest-claim")
+    if ceremony is None:
+        return _json_error(400, "Unknown or expired ceremony")
+    invite, err = _unclaimed_invite(db, ceremony["inbound_upa"])
+    if err:
+        return err
+    try:
+        identity_pub = base64.b64decode(body["identity_pub"])
+        cred_id, cred_blob, sign_count = _passkeys(request).complete_registration(
+            ceremony["state"], body["credential"]
+        )
+    except Exception as exc:
+        return _json_error(400, f"Registration failed: {exc}")
+
+    user_id = db.create_user(
+        ceremony["handle"], invite["inbound_upa"], identity_pub, guest=True
+    )
+    db.add_credential(user_id, cred_id, cred_blob, sign_count)
+    host.bootstrap_contact(user_id)
+    db.claim_guest_invite(invite["id"], user_id)
+    token = db.create_auth_session(user_id)
+    request.app["announce"](
+        f"[guests] {ceremony['handle']} claimed a guest inbox (passkey)"
+    )
+    response = web.json_response(
+        {"token": token, **_user_json(db.get_user(user_id), host, db)}
+    )
+    _set_session(response, token)
+    return response
+
+
+async def guest_claim_devicekey_begin(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    body = await request.json()
+    upa = (body.get("inbound_upa") or "").strip().lower()
+    invite, err = _unclaimed_invite(db, upa)
+    if err:
+        return err
+    handle = new_handle()
+    while db.get_user_by_handle(handle):
+        handle = new_handle()
+    challenge = secrets.token_urlsafe(32)
+    token = _store_ceremony(
+        request, "guest-claim-device", {"challenge": challenge},
+        handle=handle, inbound_upa=upa,
+    )
+    return web.json_response({"ceremony": token, "handle": handle, "challenge": challenge})
+
+
+async def guest_claim_devicekey_complete(request: web.Request) -> web.Response:
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    ceremony = _take_ceremony(request, body.get("ceremony", ""), "guest-claim-device")
+    if ceremony is None:
+        return _json_error(400, "Unknown or expired ceremony")
+    invite, err = _unclaimed_invite(db, ceremony["inbound_upa"])
+    if err:
+        return err
+    try:
+        device_pub = base64.b64decode(body["device_pub"])
+        signature = base64.b64decode(body["signature"])
+        identity_pub = base64.b64decode(body["identity_pub"])
+        _verify_device_signature(
+            device_pub, signature, ceremony["state"]["challenge"]
+        )
+    except Exception as exc:
+        return _json_error(400, f"Registration failed: {exc}")
+
+    cred_id = DEVICE_CRED_PREFIX + device_pub
+    if db.get_credential(cred_id) is not None:
+        return _json_error(409, "This device key is already registered")
+    user_id = db.create_user(
+        ceremony["handle"], invite["inbound_upa"], identity_pub, guest=True
+    )
+    db.add_credential(user_id, cred_id, device_pub, 0)
+    host.bootstrap_contact(user_id)
+    db.claim_guest_invite(invite["id"], user_id)
+    token = db.create_auth_session(user_id)
+    request.app["announce"](
+        f"[guests] {ceremony['handle']} claimed a guest inbox (device-key)"
+    )
+    response = web.json_response(
+        {"token": token, **_user_json(db.get_user(user_id), host, db)}
+    )
+    _set_session(response, token)
+    return response
 
 
 # ---------------------------------------------------------------------------
