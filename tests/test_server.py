@@ -574,3 +574,59 @@ async def test_device_key_rejects_bad_signature_and_replay(client):
         },
     )
     assert resp.status == 401
+
+
+# ---------------------------------------------------------------------------
+# Relationship slots (per-relationship inbound UPAs)
+# ---------------------------------------------------------------------------
+
+async def test_relationship_invite_mint_and_list(client, host):
+    user = await _new_user(client)
+
+    slot_seed = _seed()
+    slot_pub = ed25519.Ed25519PrivateKey.from_private_bytes(
+        slot_seed
+    ).public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    bundle, _keys = make_prekey_bundle(slot_seed)
+
+    resp = await client.post(
+        "/api/relationships",
+        json={"label": "Bob", "slot_pub": _b64(slot_pub),
+              "bundles": [bundle.to_dict()]},
+        headers=user.headers,
+    )
+    assert resp.status == 200, await resp.text()
+    rel = await resp.json()
+    # The inbound UPA lives on THIS host and is the shareable invite
+    assert rel["inbound_upa"].startswith(host.onion + "/")
+    assert rel["label"] == "Bob"
+    assert rel["state"] == "invited"
+    assert rel["outbound_upa"] is None
+    # It is a distinct per-relationship address, not the user's identity UPA
+    assert rel["inbound_upa"] != user.info["upa"]
+
+    listed = await (
+        await client.get("/api/relationships", headers=user.headers)
+    ).json()
+    assert [r["inbound_upa"] for r in listed] == [rel["inbound_upa"]]
+
+
+async def test_relationship_invite_requires_bundles(client):
+    user = await _new_user(client)
+    slot_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    resp = await client.post(
+        "/api/relationships",
+        json={"label": "Bob", "slot_pub": _b64(slot_pub), "bundles": []},
+        headers=user.headers,
+    )
+    assert resp.status == 400
+
+    # Auth is required
+    resp = await client.post("/api/relationships", json={})
+    assert resp.status == 401

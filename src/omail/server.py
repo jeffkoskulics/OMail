@@ -84,6 +84,8 @@ def create_app(
     app.router.add_put("/api/vault", vault_put)
     app.router.add_get("/api/contacts", contacts_list)
     app.router.add_post("/api/contacts", contacts_add)
+    app.router.add_get("/api/relationships", relationships_list)
+    app.router.add_post("/api/relationships", relationships_create)
     app.router.add_get("/api/bundle", bundle_get)
     app.router.add_post("/api/prekeys", prekeys_publish)
     app.router.add_get("/api/messages", messages_list)
@@ -463,6 +465,53 @@ async def contacts_add(request: web.Request) -> web.Response:
     except Exception:
         return _json_error(409, "Contact with this UPA already exists")
     return web.json_response({"id": contact_id, "name": name, "upa": upa})
+
+
+# ---------------------------------------------------------------------------
+# Relationships (per-relationship inbound slots — see docs/concepts.md)
+# ---------------------------------------------------------------------------
+
+def _relationship_json(row) -> dict:
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "inbound_upa": row["inbound_upa"],
+        "outbound_upa": row["outbound_upa"],
+        "state": row["state"],
+    }
+
+
+async def relationships_list(request: web.Request) -> web.Response:
+    user = _require_user(request)
+    rows = request.app["db"].list_relationships(user["id"])
+    return web.json_response([_relationship_json(r) for r in rows])
+
+
+async def relationships_create(request: web.Request) -> web.Response:
+    """Mints an inbound slot for one correspondent. The client generates the
+    slot keypair (private half stays in its vault) and posts the slot's
+    public key plus public prekey bundles; the host forms the inbound UPA on
+    this host and stores the bundles. Returns the UPA to share out-of-band."""
+    user = _require_user(request)
+    db: Database = request.app["db"]
+    host: HostNode = request.app["host"]
+    body = await request.json()
+    label = (body.get("label") or "").strip() or "Contact"
+    try:
+        slot_pub = base64.b64decode(body["slot_pub"])
+        inbound_upa = host.user_upa(slot_pub)
+    except Exception as exc:
+        return _json_error(400, f"Invalid slot key: {exc}")
+    bundles = body.get("bundles", [])
+    if not isinstance(bundles, list) or not bundles:
+        return _json_error(400, "Expected a non-empty 'bundles' list")
+    try:
+        rel_id = db.create_relationship(user["id"], label, inbound_upa)
+    except Exception:
+        return _json_error(409, "That slot address is already in use")
+    for bundle in bundles:
+        db.add_relationship_prekey(rel_id, bundle)
+    return web.json_response(_relationship_json(db.get_relationship(user["id"], rel_id)))
 
 
 # ---------------------------------------------------------------------------
