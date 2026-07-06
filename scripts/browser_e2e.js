@@ -46,14 +46,17 @@ const { chromium } = require("playwright");
   await page.waitForSelector("#contact-list li");
   console.log("first contact:", (await page.textContent("#contact-list li")).trim());
 
-  // Mint a per-relationship invite (distinct from the identity UPA)
+  // Mint a unified invite: a clickable link wrapping a per-relationship
+  // address distinct from the identity UPA (see docs/concepts.md)
   await page.click("#btn-create-invite");
   await page.waitForSelector("#invite-overlay:not(.hidden)");
   await page.fill("#invite-label", "Bob");
   await page.click("#invite-mint");
   await page.waitForSelector("#invite-result:not(.hidden)", { timeout: 15000 });
-  const inviteUpa = await page.textContent("#invite-upa");
-  console.log("invite UPA distinct:", inviteUpa !== upa && inviteUpa.includes(".onion/"));
+  const inviteLink = await page.textContent("#invite-upa");
+  const inviteUpa = decodeURIComponent(inviteLink.split("?claim=")[1] || "");
+  console.log("invite is a claim link:", inviteLink.includes("?claim="));
+  console.log("invite UPA distinct:", inviteUpa !== "" && inviteUpa !== upa && inviteUpa.includes(".onion/"));
   await page.click("#invite-close");
 
   // Chat with the host through the triple ratchet

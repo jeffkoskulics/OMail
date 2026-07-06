@@ -220,6 +220,14 @@ async def _notify(app: web.Application, user_id: int, payload: dict) -> None:
             app["ws_connections"][user_id].discard(ws)
 
 
+def _ws_notify(request: web.Request):
+    """A notify callback bound to this request's app, for handlers that
+    aren't already inside one (federation_deliver builds its own inline)."""
+    async def notify(user_id: int, payload: dict) -> None:
+        await _notify(request.app, user_id, payload)
+    return notify
+
+
 def _user_json(user, host: HostNode, db: Database) -> dict:
     return {
         "handle": user["handle"],
@@ -757,10 +765,21 @@ async def relationships_list(request: web.Request) -> web.Response:
 
 
 async def relationships_create(request: web.Request) -> web.Response:
-    """Mints an inbound slot for one correspondent. The client generates the
+    """Mints ONE unified invite for a correspondent — usable either way,
+    decided by them, not by Alice up front:
+
+      - pasted into their OWN host's "Accept invite" box, it runs the
+        ordinary federation connect handshake (see relationships_accept);
+      - opened directly as a URL with no host of their own, it becomes a
+        guest claim (see guest_claim_*_complete).
+
+    Both paths share the exact same inbound_upa. The client generates the
     slot keypair (private half stays in its vault) and posts the slot's
-    public key plus public prekey bundles; the host forms the inbound UPA on
-    this host and stores the bundles. Returns the UPA to share out-of-band."""
+    public key plus public prekey bundles — needed up front so a peer can
+    initiate a session immediately; a browser-only claimant simply never
+    touches this slot's keys and mints their own independent identity
+    instead. Whichever path happens first wins; see the mutual-exclusion
+    checks in connect_core and the guest claim handlers."""
     user = _require_user(request)
     db: Database = request.app["db"]
     body = await request.json()
@@ -778,8 +797,12 @@ async def relationships_create(request: web.Request) -> web.Response:
     except Exception:
         return _json_error(409, "That slot address is already in use")
     prekey_ids = [db.add_relationship_prekey(rel_id, bundle) for bundle in bundles]
+    # Register the same address as a guest claim, so whoever receives this
+    # invite can use either path without Alice choosing in advance.
+    db.create_guest_invite(user["id"], label, inbound_upa)
     result = _relationship_json(db.get_relationship(user["id"], rel_id))
     result["prekey_ids"] = prekey_ids
+    result["claim_url"] = f"/?claim={inbound_upa}"
     return web.json_response(result)
 
 
@@ -864,12 +887,38 @@ async def guests_list(request: web.Request) -> web.Response:
     return web.json_response([_guest_invite_json(r) for r in rows])
 
 
+async def _bind_guest_relationship(db: Database, upa: str, notify=None) -> None:
+    """If this UPA was minted as a unified invite (relationships_create),
+    binds it exactly the way a connecting peer would: marks the
+    relationship connected and gives the inviter an automatic contact for
+    the new guest (pushed live over their WebSocket, same as a peer
+    connecting would), reusing connect_core so both paths behave
+    identically from the inviter's side. No-ops for guests created via the
+    standalone /api/guests endpoint, which has no matching relationship
+    row."""
+    if db.get_relationship_by_inbound_upa(upa) is None:
+        return
+    try:
+        await connect_core(db, upa, upa, notify)
+    except FederationError:
+        pass  # lost a race to a real peer connecting; the guest account still stands
+
+
 def _unclaimed_invite(db: Database, upa: str):
+    """Guards the guest-claim path of a unified invite: rejects it if
+    someone already claimed it as a guest, OR if a peer with their own host
+    already connected to it first (relationships_create registers both
+    paths for the same address; whichever happens first wins)."""
     invite = db.get_guest_invite_by_upa(upa)
     if invite is None:
         return None, _json_error(404, "Unknown invite")
     if invite["claimed_user_id"] is not None:
         return None, _json_error(410, "This invite has already been claimed")
+    rel = db.get_relationship_by_inbound_upa(upa)
+    if rel is not None and rel["state"] == "connected":
+        return None, _json_error(
+            410, "This invite has already been connected to another OMail host"
+        )
     return invite, None
 
 
@@ -917,6 +966,7 @@ async def guest_claim_webauthn_complete(request: web.Request) -> web.Response:
     )
     db.add_credential(user_id, cred_id, cred_blob, sign_count)
     host.bootstrap_contact(user_id)
+    await _bind_guest_relationship(db, invite["inbound_upa"], _ws_notify(request))
     db.claim_guest_invite(invite["id"], user_id)
     token = db.create_auth_session(user_id)
     request.app["announce"](
@@ -975,6 +1025,7 @@ async def guest_claim_devicekey_complete(request: web.Request) -> web.Response:
     )
     db.add_credential(user_id, cred_id, device_pub, 0)
     host.bootstrap_contact(user_id)
+    await _bind_guest_relationship(db, invite["inbound_upa"], _ws_notify(request))
     db.claim_guest_invite(invite["id"], user_id)
     token = db.create_auth_session(user_id)
     request.app["announce"](
@@ -999,10 +1050,11 @@ async def federation_connect(request: web.Request) -> web.Response:
     db: Database = request.app["db"]
     body = await request.json()
     try:
-        return web.json_response(connect_core(
+        return web.json_response(await connect_core(
             db,
             (body.get("invite_upa") or "").strip().lower(),
             (body.get("reverse_upa") or "").strip().lower(),
+            _ws_notify(request),
         ))
     except FederationError as exc:
         return _fed_error(exc)
@@ -1025,13 +1077,10 @@ async def federation_deliver(request: web.Request) -> web.Response:
     if not isinstance(envelope, dict):
         return _json_error(400, "Missing envelope")
 
-    async def notify(uid, payload):
-        await _notify(request.app, uid, payload)
-
     try:
         return web.json_response(await deliver_core(
             db, (body.get("target_upa") or "").strip().lower(),
-            envelope, notify,
+            envelope, _ws_notify(request),
         ))
     except FederationError as exc:
         return _fed_error(exc)

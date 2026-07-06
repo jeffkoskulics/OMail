@@ -121,8 +121,7 @@
         <div class="me-handle" id="me-handle"></div>
         <div class="me-upa"><code id="me-upa"></code>
           <button class="copy" data-copy="#me-upa" title="Copy UPA">⧉</button></div>
-        <button id="btn-create-invite" class="ghost">✚ Create invite</button>
-        <button id="btn-invite-guest" class="ghost">✚ Invite a guest</button>
+        <button id="btn-create-invite" class="ghost">✚ Invite a contact</button>
         <button id="btn-show-qr" class="ghost">Show my QR</button>
         <button id="btn-devices" class="ghost">🔑 Devices</button>
         <button id="btn-migrate" class="ghost">⚑ Become Your Own Host</button>
@@ -133,7 +132,7 @@
       <ul id="contact-list"></ul>
       <form id="add-contact-form">
         <input id="new-contact-name" placeholder="Name (local only)" autocomplete="off">
-        <input id="new-contact-upa" placeholder="Paste an invite UPA…" autocomplete="off" required>
+        <input id="new-contact-upa" placeholder="Paste an invite link or address…" autocomplete="off" required>
         <button type="submit">Accept invite</button>
       </form>
     </aside>
@@ -163,42 +162,30 @@
   <div id="invite-overlay" class="overlay hidden">
     <div class="card">
       <h3>Invite a contact</h3>
-      <p class="subtle">Name them (for your eyes only). OMail mints a private
-        address reserved just for this person — share it with them
-        out-of-band.</p>
+      <p class="subtle">Name them (for your eyes only) and share the address
+        or link below out-of-band — however they use OMail, this one invite
+        works:</p>
+      <ul class="tenets">
+        <li><strong>They run their own OMail host:</strong> they paste the
+          address into their own "Accept invite" box.</li>
+        <li><strong>They don't (yet):</strong> they just open the link in a
+          browser to get a private inbox here, protected by a passkey or
+          device key they set up on the spot.</li>
+      </ul>
       <form id="invite-form">
         <input id="invite-label" placeholder="Name (e.g. Bob)" autocomplete="off" required>
         <button type="submit" class="primary" id="invite-mint">Create invite</button>
       </form>
       <div id="invite-result" class="hidden">
         <p class="upa-box"><code id="invite-upa"></code>
-          <button class="copy" data-copy="#invite-upa" title="Copy UPA">⧉</button></p>
+          <button class="copy" data-copy="#invite-upa" title="Copy link">⧉</button></p>
         <div id="invite-qr" class="qr"></div>
-        <p class="subtle">Only this contact should ever hold this address.</p>
+        <p class="subtle">One link, either way — pasting it into an "Accept
+          invite" box works too; the address is extracted automatically.
+          Only this contact should ever hold it: whoever uses it first, in
+          either way, claims it permanently.</p>
       </div>
       <button class="ghost" id="invite-close">Close</button>
-    </div>
-  </div>
-
-  <div id="guest-overlay" class="overlay hidden">
-    <div class="card">
-      <h3>Invite a guest</h3>
-      <p class="subtle">Charlie doesn't use OMail yet. This mints his inbox
-        on your host and a single address for the two of you — share the
-        link or QR with him out-of-band. Whoever opens it first sets up the
-        one credential that becomes his permanent sign-in.</p>
-      <form id="guest-form">
-        <input id="guest-label" placeholder="Name (e.g. Charlie)" autocomplete="off" required>
-        <button type="submit" class="primary" id="guest-mint">Create guest inbox</button>
-      </form>
-      <div id="guest-result" class="hidden">
-        <p class="upa-box"><code id="guest-upa"></code>
-          <button class="copy" data-copy="#guest-upa" title="Copy UPA">⧉</button></p>
-        <div id="guest-qr" class="qr"></div>
-        <p class="subtle">This link is a one-time claim — keep it confidential
-          between you and Charlie until he's set up.</p>
-      </div>
-      <button class="ghost" id="guest-close">Close</button>
     </div>
   </div>
 

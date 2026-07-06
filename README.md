@@ -119,15 +119,23 @@ printed in QR codes or embedded in any UPA. Use it as your private door
 to administer the mailbox even if the public address is being flooded.
 Disable it with `--no-private-onion`.
 
-## Guests and multi-device (see docs/concepts.md)
+## Unified invites and guests (see docs/concepts.md)
 
-A **guest** is a hosted correspondent who doesn't run OMail yet (Charlie in
-the docs). Their host mints a single UPA ahead of time as a one-time claim
-capability; whoever opens it first completes the one credential ceremony
-(passkey, falling back to device-key) that becomes their permanent
-sign-in, and the invite is spent — after that, only the credential grants
-access, not the link. A claimed guest is an ordinary tenant from then on
-and can migrate to their own host later, same as anyone else.
+**"Invite a contact" mints one UPA that works either way** — Alice doesn't
+choose in advance whether the recipient runs their own OMail host. They
+decide, just by how they use it: paste the address (or the whole link —
+either works, extracted automatically) into their own host's "Accept
+invite" box for the ordinary peer flow, or open the link directly to
+become a **guest**, hosted on Alice's node. Whoever gets there first wins;
+the invite is single-use either way, and Alice's contact list updates
+automatically (live, over her open connection) the moment either path
+completes — no separate acceptance step on her side.
+
+A guest completes the one credential ceremony (passkey, falling back to
+device-key) that becomes their permanent sign-in, and the invite is spent
+— after that, only the credential grants access, not the link. A claimed
+guest is an ordinary tenant from then on and can migrate to their own host
+later, same as anyone else.
 
 Copying an identity to a **new device** is a separate, explicit action, not
 a bearer link: an already-signed-in device mints a short-lived, single-use

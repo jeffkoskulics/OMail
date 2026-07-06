@@ -51,7 +51,9 @@ def _host_of(upa: str) -> str:
 # Receiving cores (run on the host that owns the addressed slot)
 # ---------------------------------------------------------------------------
 
-def connect_core(db: Database, invite_upa: str, reverse_upa: str) -> dict:
+async def connect_core(db: Database, invite_upa: str, reverse_upa: str,
+                       notify: Optional[Callable[[int, dict], Awaitable]] = None
+                       ) -> dict:
     """Inviter side: the acceptor is completing the handshake. Bind the
     reverse address to the invited relationship and mark it connected.
 
@@ -75,9 +77,13 @@ def connect_core(db: Database, invite_upa: str, reverse_upa: str) -> dict:
 
     db.connect_relationship(rel["id"], reverse_upa)
     # Give the inviter a thread for this correspondent now that it is real.
-    if rel["contact_id"] is None:
+    contact_id = rel["contact_id"]
+    if contact_id is None:
         contact_id = db.add_contact(rel["owner_id"], rel["label"], reverse_upa)
         db.set_relationship_contact(rel["id"], contact_id)
+    if notify is not None:
+        await notify(rel["owner_id"],
+                     {"type": "contact", "contact_id": contact_id})
     return {"ok": True}
 
 
@@ -191,7 +197,7 @@ class FederationClient:
     async def connect(self, invite_upa: str, reverse_upa: str) -> dict:
         onion = _host_of(invite_upa)
         if self._is_self(onion):
-            return connect_core(self.db, invite_upa, reverse_upa)
+            return await connect_core(self.db, invite_upa, reverse_upa, self.notify)
         return await self.remote(
             onion, "/api/federation/connect",
             {"invite_upa": invite_upa, "reverse_upa": reverse_upa},

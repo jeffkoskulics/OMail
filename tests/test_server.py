@@ -1260,3 +1260,107 @@ async def test_unmatched_path_that_is_not_a_upa_stays_a_plain_404(client):
     resp = await client.get("/favicon.ico")
     assert resp.status == 404
     assert "not a webpage" not in (await resp.text()).lower()
+
+
+# ---------------------------------------------------------------------------
+# Unified invites: one relationships_create mint is usable EITHER by a peer
+# with their own host OR opened directly as a guest claim -- whichever
+# happens first wins, and both paths converge on the same inviter-side
+# state (a bound relationship + an automatic contact).
+# ---------------------------------------------------------------------------
+
+async def test_unified_invite_guest_claims_first_blocks_peer(client, host):
+    alice = await _new_user(client)
+    a_seed, a_pub, a_bundles, a_keys = _slot_bundles()
+    invite = await (await client.post(
+        "/api/relationships",
+        json={"label": "Someone", "slot_pub": _b64(a_pub), "bundles": a_bundles},
+        headers=alice.headers,
+    )).json()
+    inbound_upa = invite["inbound_upa"]
+    assert invite["claim_url"] == f"/?claim={inbound_upa}"
+
+    # Charlie has no host: opens the same address as a guest claim
+    identity_pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    origin = f"http://{client.host}:{client.port}"
+    auth = SoftAuthenticator(client.host, origin)
+    begin = await (await client.post(
+        "/api/guests/claim/webauthn/begin", json={"inbound_upa": inbound_upa},
+    )).json()
+    credential = auth.create(begin["options"])
+    resp = await client.post(
+        "/api/guests/claim/webauthn/complete",
+        json={"ceremony": begin["ceremony"], "credential": credential,
+              "identity_pub": _b64(identity_pub)},
+    )
+    assert resp.status == 200, await resp.text()
+    charlie_info = await resp.json()
+    assert charlie_info["upa"] == inbound_upa
+    client.session.cookie_jar.clear()
+
+    # Alice automatically has a contact for Charlie -- no separate
+    # "accept invite" step needed on her side.
+    alice_contacts = await (
+        await client.get("/api/contacts", headers=alice.headers)
+    ).json()
+    charlie_contact = next(
+        (c for c in alice_contacts if c["upa"] == inbound_upa), None
+    )
+    assert charlie_contact is not None, alice_contacts
+    assert charlie_contact["name"] == "Someone"
+
+    rel = (await (
+        await client.get("/api/relationships", headers=alice.headers)
+    ).json())[0]
+    assert rel["state"] == "connected"
+    assert rel["outbound_upa"] == inbound_upa
+
+    # A real peer trying to connect to the same address now loses the race
+    bob = await _new_user(client)
+    b_seed, b_pub, b_bundles, _b_keys = _slot_bundles()
+    resp = await client.post(
+        "/api/relationships/accept",
+        json={"invite_upa": inbound_upa, "label": "Alice",
+              "slot_pub": _b64(b_pub), "bundles": b_bundles},
+        headers=bob.headers,
+    )
+    assert resp.status == 409, await resp.text()
+
+    # And the bare link now correctly explains it's already spoken for
+    # rather than re-entering the claim flow.
+    path = inbound_upa.split("/", 1)[1]
+    resp = await client.get(f"/{path}", allow_redirects=False)
+    assert resp.status == 404
+    assert "not a webpage" in (await resp.text()).lower()
+
+
+async def test_unified_invite_peer_connects_first_blocks_guest_claim(client, host):
+    alice = await _new_user(client)
+    a_seed, a_pub, a_bundles, a_keys = _slot_bundles()
+    invite = await (await client.post(
+        "/api/relationships",
+        json={"label": "Bob", "slot_pub": _b64(a_pub), "bundles": a_bundles},
+        headers=alice.headers,
+    )).json()
+    inbound_upa = invite["inbound_upa"]
+
+    bob = await _new_user(client)
+    b_seed, b_pub, b_bundles, _b_keys = _slot_bundles()
+    resp = await client.post(
+        "/api/relationships/accept",
+        json={"invite_upa": inbound_upa, "label": "Alice",
+              "slot_pub": _b64(b_pub), "bundles": b_bundles},
+        headers=bob.headers,
+    )
+    assert resp.status == 200, await resp.text()
+
+    # Someone now tries to open the SAME address as a bare guest claim --
+    # it's already a live peer relationship, so this must be rejected.
+    resp = await client.post(
+        "/api/guests/claim/webauthn/begin", json={"inbound_upa": inbound_upa},
+    )
+    assert resp.status == 410, await resp.text()
+    assert "already been connected" in (await resp.text()).lower()

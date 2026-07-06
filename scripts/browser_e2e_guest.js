@@ -1,7 +1,10 @@
-/* Guest hosting E2E (see docs/concepts.md): Alice mints a guest invite for
- * Charlie, who claims it with a passkey in a fresh browser context. Proves
- * the claimed account keeps the exact UPA Alice minted, behaves like any
- * tenant (Administrator chat works), and that the invite is single-use. */
+/* Unified invite E2E (see docs/concepts.md): Alice mints ONE invite via
+ * "Invite a contact" — the same UPA works either way, decided by the
+ * recipient, not chosen by Alice up front. Charlie has no OMail host, so he
+ * opens the link cold and claims it with a passkey. Proves the claimed
+ * account keeps the exact UPA Alice minted, that Alice gets an automatic
+ * contact for him with no extra step on her side, that Charlie behaves like
+ * any tenant (Administrator chat works), and that the invite is single-use. */
 const { chromium } = require("playwright");
 
 const PRF_AUTH = {
@@ -27,7 +30,7 @@ const PRF_AUTH = {
     return page;
   }
 
-  // Alice registers and mints a guest invite for Charlie
+  // Alice registers and mints ONE unified invite for Charlie
   const alice = await newIdentity("alice");
   await alice.goto(base + "/");
   await alice.click("#btn-register");
@@ -35,16 +38,16 @@ const PRF_AUTH = {
   await alice.click("#welcome-continue");
   await alice.waitForSelector("#mailbox-view:not(.hidden)");
 
-  await alice.click("#btn-invite-guest");
-  await alice.waitForSelector("#guest-overlay:not(.hidden)");
-  await alice.fill("#guest-label", "Charlie");
-  await alice.click("#guest-mint");
-  await alice.waitForSelector("#guest-result:not(.hidden)", { timeout: 15000 });
-  const claimUrl = (await alice.textContent("#guest-upa")).trim();
-  console.log("claim url minted:", claimUrl.includes("?claim="));
-  await alice.click("#guest-close");
+  await alice.click("#btn-create-invite");
+  await alice.waitForSelector("#invite-overlay:not(.hidden)");
+  await alice.fill("#invite-label", "Charlie");
+  await alice.click("#invite-mint");
+  await alice.waitForSelector("#invite-result:not(.hidden)", { timeout: 15000 });
+  const claimUrl = (await alice.textContent("#invite-upa")).trim();
+  console.log("unified invite is a clickable link:", claimUrl.includes("?claim="));
+  await alice.click("#invite-close");
 
-  // Charlie opens the claim link cold (no prior identity) and sets up a passkey
+  // Charlie has no OMail host: he opens the SAME link cold and claims it
   const charlie = await newIdentity("charlie");
   await charlie.goto(claimUrl);
   await charlie.waitForSelector("#claim-view:not(.hidden)", { timeout: 15000 });
@@ -64,6 +67,12 @@ const PRF_AUTH = {
   await charlie.click("#compose button");
   await charlie.waitForSelector(".msg.in", { timeout: 15000 });
   console.log("charlie admin reply:", await charlie.textContent(".msg.in"));
+
+  // Alice never touched "Accept invite" -- her contact for Charlie appears
+  // live over her open WebSocket the moment he claims (the unified-invite
+  // point), no reload needed.
+  await alice.locator("#contact-list li", { hasText: "Charlie" }).waitFor({ timeout: 10000 });
+  console.log("alice automatically has a contact for charlie: true");
 
   // The invite is single-use: re-opening the same claim link must fail
   await charlie.goto(claimUrl);

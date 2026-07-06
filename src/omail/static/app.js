@@ -209,19 +209,22 @@
     return rel;
   }
 
-  // Mint a guest invite: the host generates the address; the guest's real
-  // identity is created in THEIR browser at claim time, not here. Returns
-  // {id, label, inbound_upa, claimed} — inbound_upa is the one-time claim
-  // link (as ?claim=<upa>) and, after claim, the guest's permanent address.
-  async function createGuestInvite(label) {
-    return api("/api/guests", { json: { label } });
-  }
-
   function claimUrlFor(inboundUpa) {
     const url = new URL(location.href);
     url.search = `?claim=${encodeURIComponent(inboundUpa)}`;
     url.hash = "";
     return url.toString();
+  }
+
+  // Invites are shared as one link either way (see createInvite); accept
+  // either the bare address or the full ?claim= URL someone pastes here.
+  function extractInviteUpa(text) {
+    text = text.trim();
+    try {
+      const claim = new URL(text).searchParams.get("claim");
+      if (claim) return claim.trim().toLowerCase();
+    } catch (err) { /* not a URL: treat as a bare address */ }
+    return text.toLowerCase();
   }
 
   // Store a minted slot's private material in the vault, keying each
@@ -462,6 +465,12 @@
     const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
     ws.onmessage = async (event) => {
       const data = JSON.parse(event.data);
+      if (data.type === "contact") {
+        // Someone connected to (or claimed) one of our invites: they now
+        // appear without any action on our side (see docs/concepts.md).
+        await refreshContacts();
+        return;
+      }
       if (data.type !== "message") return;
       if (state.activeContact && data.contact_id === state.activeContact.id) {
         await openThread(state.activeContact);
@@ -917,37 +926,13 @@
       $("#invite-mint").disabled = true;
       try {
         const rel = await createInvite(label);
-        $("#invite-upa").textContent = rel.inbound_upa;
-        renderQr($("#invite-qr"), rel.inbound_upa);
+        const url = claimUrlFor(rel.inbound_upa);
+        $("#invite-upa").textContent = url;
+        renderQr($("#invite-qr"), url);
         $("#invite-result").classList.remove("hidden");
       } catch (err) {
         alert(`Could not create invite: ${err.message}`);
         $("#invite-mint").disabled = false;
-      }
-    });
-    $("#btn-invite-guest").addEventListener("click", () => {
-      $("#guest-label").value = "";
-      $("#guest-result").classList.add("hidden");
-      $("#guest-mint").disabled = false;
-      $("#guest-overlay").classList.remove("hidden");
-    });
-    $("#guest-close").addEventListener("click", () => {
-      $("#guest-overlay").classList.add("hidden");
-    });
-    $("#guest-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const label = $("#guest-label").value.trim();
-      if (!label) return;
-      $("#guest-mint").disabled = true;
-      try {
-        const invite = await createGuestInvite(label);
-        const url = claimUrlFor(invite.inbound_upa);
-        $("#guest-upa").textContent = url;
-        renderQr($("#guest-qr"), url);
-        $("#guest-result").classList.remove("hidden");
-      } catch (err) {
-        alert(`Could not create guest inbox: ${err.message}`);
-        $("#guest-mint").disabled = false;
       }
     });
     $("#btn-devices").addEventListener("click", async () => {
@@ -980,8 +965,9 @@
     $("#add-contact-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const name = $("#new-contact-name").value.trim() || "Contact";
-      const upa = $("#new-contact-upa").value.trim();
-      if (!upa) return;
+      const raw = $("#new-contact-upa").value.trim();
+      if (!raw) return;
+      const upa = extractInviteUpa(raw);
       const submit = event.target.querySelector("button[type=submit]");
       submit.disabled = true;
       try {

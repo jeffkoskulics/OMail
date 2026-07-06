@@ -47,6 +47,23 @@ Alice's host.
 
 ## Establishing a relationship
 
+Alice doesn't need to know in advance whether a correspondent runs their
+own OMail host. She mints **one unified invite** — a single UPA — and
+whoever receives it decides which of the two paths below to take, simply
+by how they use it:
+
+- **paste it into their own host's "Accept invite" box** → the peer flow
+  (Alice ↔ Bob), or
+- **open it directly as a link** → the guest claim flow (Alice ↔ Charlie).
+
+Both paths share the exact same address, so Alice shares one thing —
+either the raw UPA or the clickable link both work everywhere: an
+"Accept invite" box also accepts the full link (it extracts the address
+automatically), and the link itself works even if only the bare address
+gets passed along. Whichever path happens first wins; the invite is
+single-use either way, and Alice's contact list updates automatically
+the moment either one completes — no separate acceptance step on her side.
+
 ### Two OMail users (Alice ↔ Bob)
 
 Both Alice and Bob administer their own hosts.
