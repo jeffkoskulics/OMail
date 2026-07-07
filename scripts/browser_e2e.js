@@ -41,7 +41,7 @@ const { chromium } = require("playwright");
   console.log("welcome onion:", await page.textContent("#welcome-onion"));
   await page.click("#welcome-continue");
 
-  // Mailbox with Administrator contact auto-selected
+  // Mailbox with Echo Test contact auto-selected
   await page.waitForSelector("#mailbox-view:not(.hidden)");
   await page.waitForSelector("#contact-list li");
   console.log("first contact:", (await page.textContent("#contact-list li")).trim());

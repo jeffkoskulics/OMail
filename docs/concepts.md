@@ -8,12 +8,32 @@ definitions here.
 | Term | Meaning |
 |------|---------|
 | **Host** | The server — the hardware and OMail node process that stores accounts, routes envelopes, and runs the portal. A host is reached through its Tor onion service. |
-| **Administrator** | The operator of a host. The administrator has an account on the host they run, and is the auto-provisioned first contact every new tenant can message. |
-| **Tenant** | An account on a host. This includes the administrator's own account and any **guest** the host is carrying. Tenants are expected to be temporary — the endgame is that each tenant graduates to administering a host of their own. |
+| **Administrator** | The operator of a host — exactly one per host. The Administrator signs in through the host's **admin onion** (below) and gets an email-client view: Inbox, Sent, Drafts, and Contacts. |
+| **Tenant** | An account on a host. This includes the Administrator's own account and any **guest** the host is carrying. Tenants are expected to be temporary — the endgame is that each tenant graduates to administering a host of their own. |
 | **Guest** | A correspondent who does not (yet) run OMail and is hosted on someone else's host, reachable through a webmail interface. Charlie in the examples below. |
+| **Echo Test** | The auto-provisioned first contact every new tenant gets: a deterministic responder (`ping` → `pong`) for confirming the encryption pipeline end-to-end before any real contact exists. A diagnostic bot, not a person. |
 
 A single Ed25519 key is the host's identity: it is simultaneously the Tor
 v3 onion service key and the host's own messaging identity.
+
+## The two doors: public onion vs. admin onion
+
+Every host publishes **two** Tor onion services, backed by different keys
+and serving different audiences:
+
+- **Public onion** — the host's identity. This is the address embedded in
+  UPAs and invite links; contacts, peer hosts, and guests all connect here.
+- **Admin onion** — the operator's private door, printed on the host's
+  terminal at boot (`http://…onion`, a bare address — not a UPA). It is
+  never embedded in any UPA, invite, or page served to others; the only
+  place it exists is the operator's terminal and bookmark.
+
+The first visit to the admin onion shows a one-time setup screen; the
+credential created there (passkey or device key) becomes the host's one
+and only Administrator, and the screen never appears again — afterwards
+the admin onion is login-only. Registration and sign-in for everyone else
+happen exclusively on the public onion; the node rejects tenant
+registration on the admin door and admin sign-in on the public door.
 
 ## User Privacy Addresses (UPAs)
 

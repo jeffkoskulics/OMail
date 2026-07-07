@@ -47,8 +47,11 @@ omail --no-tor                            # local development mode
 ```
 
 The terminal prints live status and an ASCII QR code of the generated
-`.onion` portal URL. Open it in Tor Browser, create an identity with a
-passkey, and say `ping` to your auto-provisioned **Administrator** contact.
+`.onion` portal URL — the public address contacts and guests use — plus a
+separate **Administrator login** address for you alone (see below). Open
+the portal in Tor Browser, create an identity with a passkey, and say
+`ping` to your auto-provisioned **Echo Test** contact to confirm the
+encryption pipeline end-to-end.
 
 Tor needs a control port. The recommended torrc setup is cookie auth —
 no password to manage:
@@ -94,9 +97,14 @@ pytest                                    # full suite (JS interop auto-skips wi
 node scripts/browser_e2e.js              # passkey portal E2E (virtual CTAP2 + PRF)
 node scripts/browser_e2e_devicekey.js    # device-key fallback E2E (no WebAuthn)
 node scripts/browser_e2e_peer.js         # invite -> accept -> peer chat
-node scripts/browser_e2e_guest.js        # guest invite -> claim -> Administrator chat
+node scripts/browser_e2e_guest.js        # guest invite -> claim -> Echo Test chat
 node scripts/browser_e2e_devicelink.js   # multi-device linking
+node scripts/browser_e2e_admin.js        # admin onion: setup -> Inbox/Sent/Drafts/Contacts
 ```
+
+(`browser_e2e_admin.js` needs `OMAIL_ADMIN_ONION` set to the admin address
+of the node under test; it resolves the onion to 127.0.0.1 inside Chromium,
+so no Tor is required.)
 
 ## Authentication
 
@@ -109,15 +117,27 @@ server challenge. It is strictly weaker than a passkey (the key is only as
 safe as the browser profile) and the UI says so; it exists so onion users
 are never locked out.
 
-## Operator private onion
+## The Administrator's onion
 
 Alongside the public onion address (the one embedded in UPAs and shared
-with contacts), each host also publishes a second, **unlisted operator
-onion** that serves the same portal. Its key is generated once and
-persisted, so the address is stable across restarts, and it is never
-printed in QR codes or embedded in any UPA. Use it as your private door
-to administer the mailbox even if the public address is being flooded.
-Disable it with `--no-private-onion`.
+with contacts), each host publishes a second onion: the **Administrator's
+private login door**, printed on the terminal at boot as a bare
+`http://…onion` URL to copy into a browser. Its key is generated once and
+persisted, so the address survives restarts, and it is never printed in
+QR codes or embedded in any UPA — the only places it exists are your
+terminal and your bookmark.
+
+The first visit shows a one-time setup screen: create a passkey (or a
+device key) and you become the node's one and only Administrator; the
+screen never appears again. After that the admin onion is login-only, and
+signing in lands you in an email-client view — **Inbox** and **Sent**
+aggregate every conversation (decrypted in your browser; the node cannot
+build these lists), **Drafts** keeps unsent compose text (vault-encrypted,
+like everything else), and **Contacts** is the classic thread view with a
+**✚** button that mints an invite as a QR code / copyable link. The two
+doors don't mix: tenant registration is refused on the admin onion, and
+the Administrator's credential doesn't work on the public one. Disable
+the admin onion with `--no-admin-onion`.
 
 ## Unified invites and guests (see docs/concepts.md)
 

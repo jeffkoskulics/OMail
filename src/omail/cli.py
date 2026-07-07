@@ -17,7 +17,7 @@ from aiohttp import web
 
 from omail import __version__
 from omail.db import Database
-from omail.host import HostNode
+from omail.host import ADMIN_ONION_KEY_CONFIG, HostNode
 from omail.key_pair import KeyPair
 from omail.onion_service import OnionService
 from omail.qr import render_ascii
@@ -59,8 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "not needed when torrc uses CookieAuthentication 1)")
     parser.add_argument("--no-tor", action="store_true",
                         help="development mode: skip the Tor Hidden Service")
-    parser.add_argument("--no-private-onion", action="store_true",
-                        help="skip the operator-only private onion address")
+    parser.add_argument("--no-admin-onion", action="store_true",
+                        help="skip provisioning the Administrator's dedicated login onion")
     parser.add_argument("--version", action="version",
                         version=f"omail {__version__}")
     return parser
@@ -130,27 +130,27 @@ def _start_onion(host_kp: KeyPair, args) -> OnionService:
     return service
 
 
-def _operator_onion_keypair(db: Database) -> KeyPair:
-    """Loads (or mints and persists) the host's private operator onion key.
+def _admin_onion_keypair(db: Database) -> KeyPair:
+    """Loads (or mints and persists) the Administrator's dedicated onion key.
 
     This key is independent of the node's public identity: the resulting
     .onion address serves the same portal but is never embedded in UPAs,
-    printed QR codes, or shared with contacts. It is the operator's
-    unlisted door — unlinkable to the public address, and still open if
-    the public endpoint is being flooded or blocked.
+    printed QR codes, or shared with contacts — it is the ONE Administrator
+    account's own login surface (docs/concepts.md), separate from where
+    ordinary tenants and guests connect.
 
     Must run on the thread that owns the SQLite connection.
     """
     from cryptography.hazmat.primitives import serialization as ser
 
     kp = KeyPair()
-    pem = db.get_config("private_onion_key")
+    pem = db.get_config(ADMIN_ONION_KEY_CONFIG)
     if pem:
         kp.private_key = ser.load_pem_private_key(pem.encode(), password=None)
         kp.public_key = kp.private_key.public_key()
     else:
         kp.generate_key_pair()
-        db.set_config("private_onion_key", kp.get_private_str())
+        db.set_config(ADMIN_ONION_KEY_CONFIG, kp.get_private_str())
     return kp
 
 
@@ -229,7 +229,7 @@ async def serve(args) -> int:
     local_url = f"http://127.0.0.1:{args.port}"
     services = []
     tor_live = False
-    private_onion = None
+    admin_onion = None
     if args.no_tor:
         status("tor hidden service  : SKIPPED (--no-tor); portal is local-only")
     else:
@@ -246,19 +246,19 @@ async def serve(args) -> int:
             for hint in _tor_error_hints(exc, args.control_port):
                 status(f"  {hint}")
             status("continuing local-only; fix Tor and restart to go dark")
-        if tor_live and not args.no_private_onion:
+        if tor_live and not args.no_admin_onion:
             try:
                 # Key I/O happens here on the event-loop thread (SQLite);
                 # only the stem/Tor network call runs in the executor.
-                operator_kp = _operator_onion_keypair(db)
-                private_service = await loop.run_in_executor(
-                    None, _start_onion, operator_kp, args
+                admin_kp = _admin_onion_keypair(db)
+                admin_service = await loop.run_in_executor(
+                    None, _start_onion, admin_kp, args
                 )
-                services.append(("operator", private_service))
-                private_onion = f"{private_service.service_id}.onion"
-                status(f"private operator    : LIVE at {private_onion} (unlisted — never share)")
+                services.append(("admin", admin_service))
+                admin_onion = f"{admin_service.service_id}.onion"
+                status(f"admin onion         : LIVE at {admin_onion}")
             except Exception as exc:
-                status(f"private operator    : FAILED ({exc})")
+                status(f"admin onion         : FAILED ({exc})")
                 status("public host service is unaffected and remains LIVE")
         if tor_live:
             try:
@@ -278,14 +278,17 @@ async def serve(args) -> int:
     status(f"host UPA            : {host.upa}")
     print()
     if tor_live:
-        print(f"  Access the {host.host_name} OMail portal in Tor Browser:")
+        print(f"  Contacts & guests reach the {host.host_name} OMail portal here:")
         print(f"\n      {onion_url}\n")
+        print("  This is the address embedded in UPAs and invite links.")
         print("  Bookmark it — there is no clearnet fallback. Scan to open:\n")
         print(render_ascii(onion_url))
-        if private_onion:
-            print("  Operator-only private address (same portal, unlisted;")
-            print("  bookmark privately, NEVER share or publish):\n")
-            print(f"      http://{private_onion}\n")
+        if admin_onion:
+            print("  " + "─" * 60)
+            print("  Administrator login — separate from the address above.")
+            print("  Open this yourself; never share it with contacts or guests:")
+            print(f"\n      http://{admin_onion}\n")
+            print("  " + "─" * 60)
     else:
         print(f"  The {host.host_name} OMail portal is LOCAL-ONLY right now:")
         print(f"\n      {local_url}\n")

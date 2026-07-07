@@ -180,7 +180,7 @@ async def test_registration_creates_upa_and_host_contact(client, host):
         await client.get("/api/contacts", headers=user.headers)
     ).json()
     assert len(contacts) == 1
-    assert contacts[0]["name"] == "Administrator"
+    assert contacts[0]["name"] == "Echo Test"
     assert contacts[0]["is_host"] is True
     assert contacts[0]["upa"] == host.upa
 
@@ -485,7 +485,7 @@ async def test_device_key_register_login_and_vault(client, host):
     me = await (await client.get("/api/me", headers=headers)).json()
     assert me["handle"] == info["handle"]
     contacts = await (await client.get("/api/contacts", headers=headers)).json()
-    assert contacts[0]["name"] == "Administrator"
+    assert contacts[0]["name"] == "Echo Test"
 
     # Vault round-trips (opaque to the server, same as passkey users)
     put = await client.put(
@@ -933,7 +933,7 @@ async def test_guest_invite_claim_via_passkey(client, host):
     contacts = await (
         await client.get("/api/contacts", headers=charlie_headers)
     ).json()
-    assert contacts[0]["name"] == "Administrator"
+    assert contacts[0]["name"] == "Echo Test"
 
     listed = await (await client.get("/api/guests", headers=alice.headers)).json()
     assert listed[0]["claimed"] is True
@@ -1364,3 +1364,168 @@ async def test_unified_invite_peer_connects_first_blocks_guest_claim(client, hos
     )
     assert resp.status == 410, await resp.text()
     assert "already been connected" in (await resp.text()).lower()
+
+
+# ---------------------------------------------------------------------------
+# Administrator onion: first-run setup, single-admin rule, onion separation
+# ---------------------------------------------------------------------------
+
+def _provision_admin_onion(db) -> str:
+    """Mint (and persist) the admin onion key the CLI would have created,
+    returning the onion address a browser's Host header would carry."""
+    from omail.cli import _admin_onion_keypair
+    from omail.host import admin_onion_address
+
+    _admin_onion_keypair(db)
+    return admin_onion_address(db)
+
+
+def _identity_pub() -> bytes:
+    return ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+
+async def _admin_devicekey_setup(client, admin_host):
+    """Run the full device-key admin setup ceremony via the admin onion."""
+    priv, pub = _device_pair()
+    begin = await (await client.post(
+        "/api/admin/setup/devicekey/begin", json={}, headers=admin_host
+    )).json()
+    resp = await client.post(
+        "/api/devicekey/register/complete",
+        json={
+            "ceremony": begin["ceremony"],
+            "device_pub": _b64(pub),
+            "signature": _b64(priv.sign(begin["challenge"].encode())),
+            "identity_pub": _b64(_identity_pub()),
+        },
+        headers=admin_host,
+    )
+    return resp, priv, pub
+
+
+async def test_admin_status_and_devicekey_setup(client, db):
+    admin_onion = _provision_admin_onion(db)
+    admin_host = {"Host": admin_onion}
+
+    # Public onion is never the admin surface; admin onion starts unclaimed
+    assert await (await client.get("/api/admin/status")).json() == {
+        "is_admin_onion": False, "admin_exists": False,
+    }
+    assert await (await client.get(
+        "/api/admin/status", headers=admin_host
+    )).json() == {"is_admin_onion": True, "admin_exists": False}
+
+    # The index page tells the client which surface it loaded on
+    html = await (await client.get("/", headers=admin_host)).text()
+    assert 'data-is-admin-onion="true"' in html
+    html = await (await client.get("/")).text()
+    assert 'data-is-admin-onion="false"' in html
+
+    # Setup cannot even begin off the admin onion
+    resp = await client.post("/api/admin/setup/devicekey/begin", json={})
+    assert resp.status == 403
+    resp = await client.post("/api/admin/setup/webauthn/begin", json={})
+    assert resp.status == 403
+
+    # First-run setup claims the node
+    resp, _, _ = await _admin_devicekey_setup(client, admin_host)
+    assert resp.status == 200, await resp.text()
+    info = await resp.json()
+    assert info["is_admin"] is True
+
+    # ... and exactly once: the gate closes for good
+    for path in ("/api/admin/setup/devicekey/begin",
+                 "/api/admin/setup/webauthn/begin"):
+        resp = await client.post(path, json={}, headers=admin_host)
+        assert resp.status == 409
+    assert await (await client.get(
+        "/api/admin/status", headers=admin_host
+    )).json() == {"is_admin_onion": True, "admin_exists": True}
+
+
+async def test_tenant_registration_refused_on_admin_onion(client, db):
+    admin_onion = _provision_admin_onion(db)
+    admin_host = {"Host": admin_onion}
+    for path in ("/api/webauthn/register/begin",
+                 "/api/devicekey/register/begin"):
+        resp = await client.post(path, json={}, headers=admin_host)
+        assert resp.status == 403, await resp.text()
+
+
+async def test_devicekey_login_enforces_onion_separation(client, db):
+    admin_onion = _provision_admin_onion(db)
+    admin_host = {"Host": admin_onion}
+    resp, admin_priv, admin_pub = await _admin_devicekey_setup(client, admin_host)
+    assert resp.status == 200
+
+    async def device_login(priv, pub, headers=None):
+        begin = await (await client.post(
+            "/api/devicekey/login/begin", json={}, headers=headers
+        )).json()
+        return await client.post(
+            "/api/devicekey/login/complete",
+            json={
+                "ceremony": begin["ceremony"],
+                "device_pub": _b64(pub),
+                "signature": _b64(priv.sign(begin["challenge"].encode())),
+            },
+            headers=headers,
+        )
+
+    # The Administrator's key opens only the admin door
+    assert (await device_login(admin_priv, admin_pub)).status == 403
+    ok = await device_login(admin_priv, admin_pub, headers=admin_host)
+    assert ok.status == 200
+    assert (await ok.json())["is_admin"] is True
+
+    # An ordinary tenant's key opens only the public door
+    tenant_priv, tenant_pub = _device_pair()
+    resp = await _device_register(client, tenant_priv, tenant_pub, _identity_pub())
+    assert resp.status == 200
+    assert (await resp.json())["is_admin"] is False
+    assert (await device_login(tenant_priv, tenant_pub,
+                               headers=admin_host)).status == 403
+    assert (await device_login(tenant_priv, tenant_pub)).status == 200
+
+
+async def test_admin_passkey_setup_is_origin_bound(client, db):
+    """Passkey admin setup works on the admin onion, and the resulting
+    credential is useless on the public onion (WebAuthn RP binding)."""
+    from tests.soft_authenticator import SoftAuthenticator
+
+    admin_onion = _provision_admin_onion(db)
+    admin_host = {"Host": admin_onion}
+    authenticator = SoftAuthenticator(admin_onion, f"http://{admin_onion}")
+
+    begin = await (await client.post(
+        "/api/admin/setup/webauthn/begin", json={}, headers=admin_host
+    )).json()
+    credential = authenticator.create(begin["options"])
+    resp = await client.post(
+        "/api/webauthn/register/complete",
+        json={
+            "ceremony": begin["ceremony"],
+            "credential": credential,
+            "identity_pub": _b64(_identity_pub()),
+        },
+        headers=admin_host,
+    )
+    assert resp.status == 200, await resp.text()
+    info = await resp.json()
+    assert info["is_admin"] is True
+    me = await (await client.get(
+        "/api/me", headers={"Authorization": f"Bearer {info['token']}"}
+    )).json()
+    assert me["is_admin"] is True
+
+    # Same assertion presented on the public onion: rpIdHash won't verify
+    begin = await (await client.post("/api/webauthn/login/begin", json={})).json()
+    assertion = authenticator.get(begin["options"])
+    resp = await client.post(
+        "/api/webauthn/login/complete",
+        json={"ceremony": begin["ceremony"], "credential": assertion},
+    )
+    assert resp.status == 401

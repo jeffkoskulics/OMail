@@ -4,7 +4,7 @@
  * opens the link cold and claims it with a passkey. Proves the claimed
  * account keeps the exact UPA Alice minted, that Alice gets an automatic
  * contact for him with no extra step on her side, that Charlie behaves like
- * any tenant (Administrator chat works), and that the invite is single-use. */
+ * any tenant (Echo Test chat works), and that the invite is single-use. */
 const { chromium } = require("playwright");
 
 const PRF_AUTH = {
@@ -62,7 +62,7 @@ const PRF_AUTH = {
   await charlie.click("#welcome-continue");
   await charlie.waitForSelector("#mailbox-view:not(.hidden)");
 
-  // Charlie is now an ordinary tenant: Administrator chat works
+  // Charlie is now an ordinary tenant: Echo Test chat works
   await charlie.fill("#compose-input", "ping");
   await charlie.click("#compose button");
   await charlie.waitForSelector(".msg.in", { timeout: 15000 });

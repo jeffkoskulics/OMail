@@ -32,7 +32,7 @@ const { chromium } = require("playwright");
   console.log("welcome UPA:", upa);
   await page.click("#welcome-continue");
 
-  // Mailbox works: chat with the Administrator over the triple ratchet
+  // Mailbox works: chat with the Echo Test over the triple ratchet
   await page.waitForSelector("#mailbox-view:not(.hidden)");
   await page.waitForSelector("#compose:not(.hidden)");
   await page.fill("#compose-input", "ping");

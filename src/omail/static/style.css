@@ -124,7 +124,51 @@ input:focus { outline: none; border-color: var(--accent); }
 .warn code { color: var(--danger); font-size: 0.78rem; }
 
 /* ------- mailbox ------- */
-#mailbox-view { display: flex; flex: 1; min-height: 0; }
+#mailbox-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#mailbox-body { display: flex; flex: 1; min-height: 0; }
+
+/* ------- admin nav (Inbox / Sent / Drafts / Contacts) ------- */
+#admin-nav {
+  display: flex; gap: 0.4rem; align-items: center;
+  padding: 0.55rem 1.2rem; border-bottom: 1px solid var(--border);
+}
+#admin-nav button {
+  border: 0; background: transparent; color: var(--fg-dim);
+  padding: 0.4rem 0.9rem; border-radius: 999px; font-weight: 600;
+}
+#admin-nav button:hover { color: var(--fg); background: var(--bg-raised); }
+#admin-nav button.active { color: var(--accent); background: var(--accent-dark); }
+#admin-nav #admin-add-contact {
+  margin-left: auto; color: #06210f; background: var(--accent);
+  font-weight: 700; border-radius: 8px;
+}
+
+/* ------- admin pane (aggregated Inbox / Sent / Drafts lists) ------- */
+#admin-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#admin-pane-head {
+  padding: 0.9rem 1.3rem; border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 0.8rem;
+}
+#admin-pane-head h3 { margin: 0; }
+#admin-list { list-style: none; margin: 0; padding: 0.6rem 0; overflow-y: auto; flex: 1; }
+#admin-list li {
+  display: flex; gap: 0.9rem; align-items: baseline;
+  padding: 0.65rem 1.3rem; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+#admin-list li:hover { background: var(--bg-raised); }
+#admin-list .afrom { font-weight: 700; flex-shrink: 0; min-width: 9rem; }
+#admin-list .asnippet {
+  flex: 1; color: var(--fg-dim); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+#admin-list .atime {
+  flex-shrink: 0; font: 0.7rem var(--mono); color: var(--fg-dim);
+}
+#admin-list li.aempty {
+  cursor: default; color: var(--fg-dim); justify-content: center;
+  border-bottom: 0; padding: 2rem;
+}
 #sidebar {
   width: 320px; flex-shrink: 0; border-right: 1px solid var(--border);
   display: flex; flex-direction: column; padding: 1rem; gap: 0.8rem;
@@ -172,7 +216,7 @@ input:focus { outline: none; border-color: var(--accent); }
 #compose { display: flex; gap: 0.7rem; padding: 0.9rem 1.3rem; border-top: 1px solid var(--border); }
 
 @media (max-width: 760px) {
-  #mailbox-view { flex-direction: column; }
+  #mailbox-body { flex-direction: column; }
   #sidebar { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
   .msg { max-width: 92%; }
 }

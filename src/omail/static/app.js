@@ -17,6 +17,9 @@
 
   const HOST_NAME = document.body.dataset.hostName;
   const HOST_ONION = document.body.dataset.hostOnion;
+  // Which door did this page load through? The public onion serves contacts
+  // and guests; the admin onion serves exactly one person — the operator.
+  const IS_ADMIN_ONION = document.body.dataset.isAdminOnion === "true";
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // ------------------------------------------------------------- state ----
@@ -29,6 +32,7 @@
     activeContact: null,
     ratchets: {},      // upa -> TripleRatchet (live instances)
     unread: {},        // contact_id -> count
+    adminTab: null,    // "inbox" | "sent" | "drafts" | "contacts" (admin only)
     ws: null,
   };
 
@@ -151,6 +155,7 @@
   async function loadVault() {
     const blob = await api("/api/vault");
     state.vault = await C.vaultDecrypt(state.vaultKey, blob);
+    state.vault.drafts = state.vault.drafts || {};
     state.ratchets = {};
     for (const [upa, dict] of Object.entries(state.vault.ratchets || {})) {
       state.ratchets[upa] = C.TripleRatchet.fromDict(dict);
@@ -163,6 +168,7 @@
       ratchets: {},
       responder_keys: {},
       relationships: {},   // rel_id -> { seed, inbound_upa, label, responder_keys }
+      drafts: {},          // contact upa -> { text, ts } — unsent compose text
     };
   }
 
@@ -328,6 +334,7 @@
   // ----------------------------------------------------------------- ui ----
   function show(view) {
     $("#auth-view").classList.add("hidden");
+    $("#admin-auth-view").classList.add("hidden");
     $("#mailbox-view").classList.add("hidden");
     $(view).classList.remove("hidden");
   }
@@ -358,9 +365,10 @@
       area.innerHTML = "";
     }
     const chip = $("#mode-chip");
-    const mode = state.me ? state.me.mode : "tenant";
+    const mode = state.me && state.me.is_admin
+      ? "admin" : (state.me ? state.me.mode : "tenant");
     chip.textContent = mode;
-    chip.classList.toggle("host", mode === "host");
+    chip.classList.toggle("host", mode === "host" || mode === "admin");
   }
 
   function renderContacts() {
@@ -396,40 +404,68 @@
     $("#messages").appendChild(div);
   }
 
+  // Decrypt a contact's full thread to plaintext entries. Shared by the
+  // per-contact thread view and the Administrator's aggregated Inbox/Sent
+  // lists; incoming ciphertext is archived (vault-encrypted) as a side
+  // effect, exactly as when the thread itself is opened.
+  async function fetchThread(contact) {
+    const messages = await api(`/api/messages?contact_id=${contact.id}`);
+    const entries = [];
+    let vaultDirty = false;
+    for (const message of messages) {
+      try {
+        if (message.envelope && message.direction === "in") {
+          const text = await openIncoming(contact, message);
+          entries.push({ direction: "in", text, ts: message.created_at });
+          vaultDirty = true;
+        } else if (message.archive) {
+          const data = await C.vaultDecrypt(state.vaultKey, message.archive);
+          entries.push({
+            direction: message.direction, text: data.text, ts: message.created_at,
+          });
+        }
+      } catch (err) {
+        console.error(`message ${message.id} failed`, err);
+        entries.push({
+          direction: "error",
+          text: `⚠ message ${message.id}: ${err.message || err}`,
+          ts: message.created_at,
+        });
+      }
+    }
+    if (vaultDirty) await saveVault();
+    return entries;
+  }
+
   async function openThread(contact) {
+    const previous = state.activeContact;
     state.activeContact = contact;
     state.unread[contact.id] = 0;
     renderContacts();
     $("#thread-title").textContent = contact.name;
     $("#thread-sub").textContent = contact.upa;
     $("#compose").classList.remove("hidden");
+    // Unsent compose text comes back where it was left — but never clobber
+    // what's being typed right now (this rerenders on every live message).
+    const input = $("#compose-input");
+    if (!previous || previous.id !== contact.id || !input.value.trim()) {
+      const draft = (state.vault.drafts || {})[contact.upa];
+      input.value = draft ? draft.text : "";
+    }
     $("#messages").innerHTML = "";
     systemMessage("Triple Ratchet session — end-to-end encrypted");
 
-    let messages;
+    let entries;
     try {
-      messages = await api(`/api/messages?contact_id=${contact.id}`);
+      entries = await fetchThread(contact);
     } catch (err) {
       systemMessage(`Could not load messages: ${err.message}`);
       return;
     }
-    let vaultDirty = false;
-    for (const message of messages) {
-      try {
-        if (message.envelope && message.direction === "in") {
-          const text = await openIncoming(contact, message);
-          appendMessage("in", text, message.created_at);
-          vaultDirty = true;
-        } else if (message.archive) {
-          const data = await C.vaultDecrypt(state.vaultKey, message.archive);
-          appendMessage(message.direction, data.text, message.created_at);
-        }
-      } catch (err) {
-        console.error(`message ${message.id} failed`, err);
-        systemMessage(`⚠ message ${message.id}: ${err.message || err}`);
-      }
+    for (const entry of entries) {
+      if (entry.direction === "error") systemMessage(entry.text);
+      else appendMessage(entry.direction, entry.text, entry.ts);
     }
-    if (vaultDirty) await saveVault();
   }
 
   async function sendCurrent(event) {
@@ -448,6 +484,7 @@
       const payload = { contact_id: contact.id, envelope, archive };
       if (prekeyId !== null) payload.prekey_id = prekeyId;
       const result = await api("/api/messages/send", { json: payload });
+      delete (state.vault.drafts || {})[contact.upa];
       await saveVault();
       appendMessage("out", text, Date.now() / 1000);
       if (result.delivery === "queued-remote") {
@@ -455,6 +492,132 @@
       }
     } catch (err) {
       systemMessage(`⚠ send failed: ${err.message}`);
+    }
+  }
+
+  // ------------------------------------------------------------- drafts ----
+  // Compose text is auto-saved into the vault (encrypted like everything
+  // else) as the user types, restored when the thread reopens, and cleared
+  // on send. The Administrator's Drafts tab lists what's pending.
+  let draftTimer = null;
+  function scheduleDraftSave() {
+    const contact = state.activeContact;
+    if (!contact || !state.vault) return;
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(async () => {
+      const text = $("#compose-input").value;
+      state.vault.drafts = state.vault.drafts || {};
+      const existing = state.vault.drafts[contact.upa];
+      if (text.trim()) {
+        if (existing && existing.text === text) return;
+        state.vault.drafts[contact.upa] = { text, ts: Date.now() / 1000 };
+      } else if (existing) {
+        delete state.vault.drafts[contact.upa];
+      } else {
+        return;
+      }
+      try { await saveVault(); } catch (err) { /* next keystroke retries */ }
+    }, 1200);
+  }
+
+  // ---------------------------------------------------------- admin nav ----
+  // The Administrator gets an email-client layout: Inbox and Sent aggregate
+  // every thread (decrypted client-side — the node can't build these lists),
+  // Drafts shows unsent compose text, Contacts is the classic thread view.
+  function adminNavButtons() {
+    return document.querySelectorAll("#admin-nav button[data-tab]");
+  }
+
+  async function adminTab(tab) {
+    state.adminTab = tab;
+    adminNavButtons().forEach((button) => {
+      button.classList.toggle("active", button.dataset.tab === tab);
+    });
+    const contactsMode = tab === "contacts";
+    $("#sidebar").classList.toggle("hidden", !contactsMode);
+    $("#thread").classList.toggle("hidden", !contactsMode);
+    $("#admin-pane").classList.toggle("hidden", contactsMode);
+    if (tab === "inbox") await renderAdminMailbox("in");
+    else if (tab === "sent") await renderAdminMailbox("out");
+    else if (tab === "drafts") renderAdminDrafts();
+  }
+
+  function adminRow({ title, snippet, time, onOpen }) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="afrom">${esc(title)}</span>
+      <span class="asnippet">${esc(snippet)}</span>
+      <span class="atime">${esc(time)}</span>`;
+    li.addEventListener("click", onOpen);
+    return li;
+  }
+
+  function adminEmptyRow(text) {
+    const li = document.createElement("li");
+    li.className = "aempty";
+    li.textContent = text;
+    return li;
+  }
+
+  async function openFromAdminList(contact) {
+    await adminTab("contacts");
+    await openThread(contact);
+  }
+
+  async function renderAdminMailbox(direction) {
+    const list = $("#admin-list");
+    $("#admin-pane-title").textContent = direction === "in" ? "Inbox" : "Sent";
+    $("#admin-pane-sub").textContent = "decrypting…";
+    list.innerHTML = "";
+    const rows = [];
+    for (const contact of state.contacts) {
+      let entries;
+      try { entries = await fetchThread(contact); } catch (err) { continue; }
+      for (const entry of entries) {
+        if (entry.direction === direction) rows.push({ contact, ...entry });
+      }
+      if (direction === "in") state.unread[contact.id] = 0;
+    }
+    if (direction === "in") renderContacts();
+    rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    $("#admin-pane-sub").textContent =
+      `${rows.length} message${rows.length === 1 ? "" : "s"} · decrypted in this browser`;
+    if (!rows.length) {
+      list.appendChild(adminEmptyRow(direction === "in"
+        ? "Nothing yet. Add a contact (✚) and share the invite to start a conversation."
+        : "No sent messages yet."));
+      return;
+    }
+    for (const row of rows) {
+      list.appendChild(adminRow({
+        title: row.contact.name,
+        snippet: row.text,
+        time: row.ts ? new Date(row.ts * 1000).toLocaleString() : "",
+        onOpen: () => openFromAdminList(row.contact),
+      }));
+    }
+  }
+
+  function renderAdminDrafts() {
+    const list = $("#admin-list");
+    $("#admin-pane-title").textContent = "Drafts";
+    list.innerHTML = "";
+    const drafts = Object.entries(state.vault.drafts || {})
+      .sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+    $("#admin-pane-sub").textContent =
+      drafts.length ? `${drafts.length} unsent` : "";
+    if (!drafts.length) {
+      list.appendChild(adminEmptyRow(
+        "No drafts. Text left unsent in a compose box is kept here automatically."));
+      return;
+    }
+    for (const [upa, draft] of drafts) {
+      const contact = state.contacts.find((c) => c.upa === upa);
+      list.appendChild(adminRow({
+        title: contact ? contact.name : upa,
+        snippet: draft.text,
+        time: draft.ts ? new Date(draft.ts * 1000).toLocaleString() : "",
+        onOpen: () => { if (contact) openFromAdminList(contact); },
+      }));
     }
   }
 
@@ -472,7 +635,11 @@
         return;
       }
       if (data.type !== "message") return;
-      if (state.activeContact && data.contact_id === state.activeContact.id) {
+      if (state.adminTab === "inbox") {
+        // The aggregated Inbox is on screen: fold the new message in live.
+        await renderAdminMailbox("in");
+      } else if (state.activeContact && data.contact_id === state.activeContact.id
+                 && (!state.me.is_admin || state.adminTab === "contacts")) {
         await openThread(state.activeContact);
       } else {
         state.unread[data.contact_id] = (state.unread[data.contact_id] || 0) + 1;
@@ -490,10 +657,17 @@
   }
 
   // -------------------------------------------------------------- flows ----
-  async function register() {
+  // The admin setup screen reuses these flows with a different *begin*
+  // endpoint (the gated /api/admin/setup/... ones) and status line; the
+  // complete endpoints are shared — the ceremony itself carries the role.
+  async function register(opts = {}) {
+    const statusSel = opts.statusSel || "#auth-status";
+    const onFallback = opts.onFallback || revealDeviceFallback;
     try {
-      setStatus("Waiting for your authenticator…", true);
-      const begin = await api("/api/webauthn/register/begin", { json: {} });
+      setStatus("Waiting for your authenticator…", true, statusSel);
+      const begin = await api(
+        opts.begin || "/api/webauthn/register/begin", { json: {} },
+      );
       const credential = await navigator.credentials.create(
         decodeCreationOptions(begin.options),
       );
@@ -510,7 +684,7 @@
       state.me = info;
 
       // PRF: evaluate inside the authenticator; fall back if unsupported.
-      setStatus("Deriving your vault key inside the authenticator…", true);
+      setStatus("Deriving your vault key inside the authenticator…", true, statusSel);
       let prf = prfFromExtensions(credential);
       if (!prf) prf = await obtainPrfViaAssertion(new Uint8Array(credential.rawId));
       state.vaultKey = prf ? await C.deriveVaultKey(prf) : fallbackVaultKey();
@@ -518,18 +692,20 @@
       state.vault = newVault(seed);
       await saveVault();
       await publishPrekeys();
-      setStatus("");
+      setStatus("", false, statusSel);
       await enterMailbox();
       showWelcome();
     } catch (err) {
-      setStatus(`Registration failed: ${err.message}`, true);
-      revealDeviceFallback();
+      setStatus(`Registration failed: ${err.message}`, true, statusSel);
+      onFallback();
     }
   }
 
-  async function login() {
+  async function login(opts = {}) {
+    const statusSel = opts.statusSel || "#auth-status";
+    const onFallback = opts.onFallback || revealDeviceFallback;
     try {
-      setStatus("Waiting for your passkey…", true);
+      setStatus("Waiting for your passkey…", true, statusSel);
       const begin = await api("/api/webauthn/login/begin", { json: {} });
       const credential = await navigator.credentials.get(
         decodeRequestOptions(begin.options),
@@ -541,11 +717,11 @@
       const prf = prfFromExtensions(credential);
       state.vaultKey = prf ? await C.deriveVaultKey(prf) : fallbackVaultKey();
       await loadVault();
-      setStatus("");
+      setStatus("", false, statusSel);
       await enterMailbox();
     } catch (err) {
-      setStatus(`Sign-in failed: ${err.message}`, true);
-      revealDeviceFallback();
+      setStatus(`Sign-in failed: ${err.message}`, true, statusSel);
+      onFallback();
     }
   }
 
@@ -654,7 +830,8 @@
     );
   }
 
-  async function deviceRegister() {
+  async function deviceRegister(opts = {}) {
+    const statusSel = opts.statusSel || "#auth-status";
     const sure = confirm(
       "Create a DEVICE-KEY identity?\n\nNo passkey will protect this " +
       "account. A key stored in this browser profile becomes your only " +
@@ -663,8 +840,10 @@
     );
     if (!sure) return;
     try {
-      setStatus("Creating your device-key identity…", true);
-      const begin = await api("/api/devicekey/register/begin", { json: {} });
+      setStatus("Creating your device-key identity…", true, statusSel);
+      const begin = await api(
+        opts.begin || "/api/devicekey/register/begin", { json: {} },
+      );
       const pair = deviceKeyPair(true);
       const idSeed = C.randomBytes(32);
       const identity = C.identityFromSeed(idSeed);
@@ -681,22 +860,23 @@
       state.vault = newVault(idSeed);
       await saveVault();
       await publishPrekeys();
-      setStatus("Signed in with a device key — this browser profile holds your only credentials.", true);
+      setStatus("Signed in with a device key — this browser profile holds your only credentials.", true, statusSel);
       await enterMailbox();
       showWelcome();
     } catch (err) {
-      setStatus(`Device-key registration failed: ${err.message}`, true);
+      setStatus(`Device-key registration failed: ${err.message}`, true, statusSel);
     }
   }
 
-  async function deviceLogin() {
+  async function deviceLogin(opts = {}) {
+    const statusSel = opts.statusSel || "#auth-status";
     try {
       const pair = deviceKeyPair(false);
       if (!pair) {
-        setStatus("No device key in this browser — create an identity first.", true);
+        setStatus("No device key in this browser — create an identity first.", true, statusSel);
         return;
       }
-      setStatus("Signing in with this browser's device key…", true);
+      setStatus("Signing in with this browser's device key…", true, statusSel);
       const begin = await api("/api/devicekey/login/begin", { json: {} });
       const info = await api("/api/devicekey/login/complete", {
         json: {
@@ -708,10 +888,10 @@
       state.me = info;
       state.vaultKey = fallbackVaultKey();
       await loadVault();
-      setStatus("");
+      setStatus("", false, statusSel);
       await enterMailbox();
     } catch (err) {
-      setStatus(`Device-key sign-in failed: ${err.message}`, true);
+      setStatus(`Device-key sign-in failed: ${err.message}`, true, statusSel);
     }
   }
 
@@ -732,6 +912,11 @@
     await refreshContacts();
     connectWs();
     show("#mailbox-view");
+    if (state.me.is_admin) {
+      $("#admin-nav").classList.remove("hidden");
+      await adminTab("inbox");
+      return;
+    }
     const host = state.contacts.find((c) => c.is_host);
     if (host) openThread(host);
   }
@@ -739,7 +924,10 @@
   function showWelcome() {
     $("#welcome-handle").textContent = state.me.handle;
     $("#welcome-upa").textContent = state.me.upa;
-    $("#welcome-onion").textContent = `http://${state.me.host_onion}`;
+    // The address worth bookmarking is the door actually in use: the admin
+    // onion for the Administrator, the public portal for everyone else.
+    $("#welcome-onion").textContent =
+      IS_ADMIN_ONION ? `http://${location.host}` : `http://${state.me.host_onion}`;
     renderQr($("#welcome-qr"), state.me.upa);
     $("#welcome-overlay").classList.remove("hidden");
   }
@@ -879,10 +1067,37 @@
   }
 
   // --------------------------------------------------------------- boot ----
+  // First load on the admin onion: decide between the one-time setup screen
+  // and the login-only screen. Both CTAs stay hidden until the node answers.
+  async function adminBoot() {
+    show("#admin-auth-view");
+    renderSession();
+    if (!window.PublicKeyCredential) {
+      $("#btn-admin-setup-passkey").disabled = true;
+      $("#btn-admin-login").disabled = true;
+    }
+    try {
+      const status = await api("/api/admin/status");
+      if (status.admin_exists) {
+        $("#admin-setup-intro").classList.add("hidden");
+        $("#admin-login-intro").classList.remove("hidden");
+        $("#admin-login-cta").classList.remove("hidden");
+      } else {
+        $("#admin-setup-cta").classList.remove("hidden");
+      }
+    } catch (err) {
+      setStatus(`Could not reach the node: ${err.message}`,
+                true, "#admin-auth-status");
+    }
+  }
+
   function boot() {
     document.title = `${HOST_NAME} OMail`;
     $("#host-title").textContent = `${HOST_NAME} OMail`;
-    $("#banner-onion").textContent = `http://${HOST_ONION}`;
+    // On the admin onion, THIS address (not the public one) is the bookmark
+    // that matters — losing it means losing the admin door.
+    $("#banner-onion").textContent =
+      IS_ADMIN_ONION ? `http://${location.host}` : `http://${HOST_ONION}`;
     $("#footer-onion").textContent = HOST_ONION;
 
     if (!localStorage.getItem("omail-bookmark-ack")) {
@@ -893,11 +1108,36 @@
       $("#bookmark-banner").classList.add("hidden");
     });
 
-    $("#btn-register").addEventListener("click", register);
-    $("#btn-login").addEventListener("click", login);
-    $("#btn-register-device").addEventListener("click", deviceRegister);
-    $("#btn-login-device").addEventListener("click", deviceLogin);
+    $("#btn-register").addEventListener("click", () => register());
+    $("#btn-login").addEventListener("click", () => login());
+    $("#btn-register-device").addEventListener("click", () => deviceRegister());
+    $("#btn-login-device").addEventListener("click", () => deviceLogin());
+    $("#btn-admin-setup-passkey").addEventListener("click", () => register({
+      begin: "/api/admin/setup/webauthn/begin",
+      statusSel: "#admin-auth-status",
+      onFallback: () => {},   // device-key option is already on screen
+    }));
+    $("#btn-admin-setup-devicekey").addEventListener("click", () => deviceRegister({
+      begin: "/api/admin/setup/devicekey/begin",
+      statusSel: "#admin-auth-status",
+    }));
+    $("#btn-admin-login").addEventListener("click", () => login({
+      statusSel: "#admin-auth-status", onFallback: () => {},
+    }));
+    $("#btn-admin-login-device").addEventListener("click", () => deviceLogin({
+      statusSel: "#admin-auth-status",
+    }));
+    adminNavButtons().forEach((button) => {
+      button.addEventListener("click", () => adminTab(button.dataset.tab));
+    });
+    $("#admin-add-contact").addEventListener("click", async () => {
+      // The ✚ button: jump to Contacts and open the invite dialog — the QR
+      // code / copyable link that encodes the UPA to hand to the contact.
+      await adminTab("contacts");
+      $("#btn-create-invite").click();
+    });
     $("#compose").addEventListener("submit", sendCurrent);
+    $("#compose-input").addEventListener("input", scheduleDraftSave);
     $("#btn-migrate").addEventListener("click", migrate);
     $("#welcome-continue").addEventListener("click", () => {
       $("#welcome-overlay").classList.add("hidden");
@@ -983,6 +1223,14 @@
         submit.disabled = false;
       }
     });
+
+    if (IS_ADMIN_ONION) {
+      // The private door: setup on first visit, login-only forever after.
+      // Invite/link claims never route here — those URLs carry the public
+      // onion, so the ordinary branches below simply don't apply.
+      adminBoot();
+      return;
+    }
 
     const claimUpa = claimUpaFromUrl();
     const linkInfo = linkFragmentInfo();

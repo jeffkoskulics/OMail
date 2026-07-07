@@ -30,7 +30,7 @@ from omail.federation import (
     connect_core,
     deliver_core,
 )
-from omail.host import HostNode
+from omail.host import HostNode, admin_onion_address
 from omail.migration import promote_to_sovereign
 from omail.upa import derive_upa, parse_upa
 from omail.webauthn import PasskeyManager, new_handle
@@ -83,12 +83,14 @@ def create_app(
         db, host, notify=_fed_notify, remote=remote
     )
 
-    # One-time migration for nodes created before the rename: existing
-    # tenants keep a host contact stored under the old default label.
+    # One-time migrations for nodes created before a rename: existing
+    # tenants keep a host contact stored under an old default label.
     from omail.host import HOST_CONTACT_NAME
-    renamed = db.rename_host_contacts(HOST_CONTACT_NAME, old_name="Host Node")
-    if renamed:
-        announce(f"[users] renamed {renamed} host contact(s) to {HOST_CONTACT_NAME}")
+    for old_name in ("Host Node", "Administrator"):
+        renamed = db.rename_host_contacts(HOST_CONTACT_NAME, old_name=old_name)
+        if renamed:
+            announce(f"[users] renamed {renamed} host contact(s) "
+                     f"from '{old_name}' to {HOST_CONTACT_NAME}")
 
     app.router.add_get("/", index)
     app.router.add_get("/healthz", healthz)
@@ -102,6 +104,9 @@ def create_app(
     app.router.add_post("/api/devicekey/login/complete", device_login_complete)
     app.router.add_post("/api/logout", logout)
     app.router.add_get("/api/me", me)
+    app.router.add_get("/api/admin/status", admin_status)
+    app.router.add_post("/api/admin/setup/webauthn/begin", admin_setup_webauthn_begin)
+    app.router.add_post("/api/admin/setup/devicekey/begin", admin_setup_devicekey_begin)
     app.router.add_get("/api/vault", vault_get)
     app.router.add_put("/api/vault", vault_put)
     app.router.add_get("/api/contacts", contacts_list)
@@ -228,11 +233,25 @@ def _ws_notify(request: web.Request):
     return notify
 
 
+def _request_onion(request: web.Request) -> str:
+    return request.headers.get("Host", "").split(":")[0].lower()
+
+
+def _is_admin_onion(request: web.Request) -> bool:
+    """True if this request arrived via the Administrator's dedicated
+    onion (see host.admin_onion_address) rather than the public onion
+    where contacts and guests connect."""
+    db: Database = request.app["db"]
+    admin_onion = admin_onion_address(db)
+    return admin_onion is not None and _request_onion(request) == admin_onion
+
+
 def _user_json(user, host: HostNode, db: Database) -> dict:
     return {
         "handle": user["handle"],
         "upa": user["upa"],
         "sovereign": bool(user["sovereign"]),
+        "is_admin": user["id"] == db.get_admin_user_id(),
         "host_name": host.host_name,
         "host_onion": host.onion,
         "host_upa": host.upa,
@@ -249,6 +268,9 @@ async def index(request: web.Request) -> web.Response:
     html = (resources.files("omail") / "static" / "index.html").read_text()
     html = html.replace("{{HOST_NAME}}", host.host_name)
     html = html.replace("{{HOST_ONION}}", host.onion)
+    html = html.replace(
+        "{{IS_ADMIN_ONION}}", "true" if _is_admin_onion(request) else "false"
+    )
     return web.Response(text=html, content_type="text/html")
 
 
@@ -300,6 +322,20 @@ async def portal_fallback(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 async def register_begin(request: web.Request) -> web.Response:
+    if _is_admin_onion(request):
+        return _json_error(
+            403, "This address is the Administrator login. "
+                 "Tenants and guests register on the public portal."
+        )
+    return await _registration_options(request)
+
+
+async def _registration_options(request: web.Request, *,
+                                admin: bool = False) -> web.Response:
+    """Shared body of passkey registration: mint a handle, start the
+    WebAuthn ceremony. The admin flag rides inside the ceremony so the
+    ordinary register_complete can finish an Administrator setup too —
+    the two flows differ only in who may begin them."""
     db: Database = request.app["db"]
     handle = new_handle()
     while db.get_user_by_handle(handle):
@@ -310,6 +346,7 @@ async def register_begin(request: web.Request) -> web.Response:
         request, "register", state,
         handle=handle,
         user_id_b64=base64.b64encode(user_id_bytes).decode(),
+        admin=admin,
     )
     return web.json_response(
         {"ceremony": token, "handle": handle,
@@ -333,11 +370,17 @@ async def register_complete(request: web.Request) -> web.Response:
     except Exception as exc:
         return _json_error(400, f"Registration failed: {exc}")
 
+    if ceremony.get("admin") and db.get_admin_user_id() is not None:
+        return _json_error(409, "This node already has an Administrator")
     user_id = db.create_user(ceremony["handle"], upa, identity_pub)
+    if ceremony.get("admin"):
+        db.set_admin_user_id(user_id)
     db.add_credential(user_id, cred_id, cred_blob, sign_count)
     host.bootstrap_contact(user_id)
     token = db.create_auth_session(user_id)
     request.app["announce"](
+        f"[admin] Administrator {ceremony['handle']} completed setup (passkey)"
+        if ceremony.get("admin") else
         f"[users] new tenant {ceremony['handle']} onboarded (passkey, zero data)"
     )
     response = web.json_response(
@@ -405,13 +448,26 @@ def _verify_device_signature(device_pub: bytes, signature: bytes,
 
 
 async def device_register_begin(request: web.Request) -> web.Response:
+    if _is_admin_onion(request):
+        return _json_error(
+            403, "This address is the Administrator login. "
+                 "Tenants and guests register on the public portal."
+        )
+    return await _device_registration_challenge(request)
+
+
+async def _device_registration_challenge(request: web.Request, *,
+                                         admin: bool = False) -> web.Response:
+    """Device-key twin of _registration_options: same admin-flag-in-the-
+    ceremony trick, same shared complete handler."""
     db: Database = request.app["db"]
     handle = new_handle()
     while db.get_user_by_handle(handle):
         handle = new_handle()
     challenge = secrets.token_urlsafe(32)
     token = _store_ceremony(
-        request, "device-register", {"challenge": challenge}, handle=handle
+        request, "device-register", {"challenge": challenge},
+        handle=handle, admin=admin,
     )
     return web.json_response(
         {"ceremony": token, "handle": handle, "challenge": challenge}
@@ -439,11 +495,17 @@ async def device_register_complete(request: web.Request) -> web.Response:
     cred_id = DEVICE_CRED_PREFIX + device_pub
     if db.get_credential(cred_id) is not None:
         return _json_error(409, "This device key is already registered")
+    if ceremony.get("admin") and db.get_admin_user_id() is not None:
+        return _json_error(409, "This node already has an Administrator")
     user_id = db.create_user(ceremony["handle"], upa, identity_pub)
+    if ceremony.get("admin"):
+        db.set_admin_user_id(user_id)
     db.add_credential(user_id, cred_id, device_pub, 0)
     host.bootstrap_contact(user_id)
     token = db.create_auth_session(user_id)
     request.app["announce"](
+        f"[admin] Administrator {ceremony['handle']} completed setup (device key)"
+        if ceremony.get("admin") else
         f"[users] new tenant {ceremony['handle']} onboarded "
         "(device-key fallback, zero data)"
     )
@@ -480,6 +542,19 @@ async def device_login_complete(request: web.Request) -> web.Response:
     if stored is None:
         return _json_error(401, "Unknown device key")
     user = db.get_user(stored["user_id"])
+    # Keep the two front doors separate. Passkeys get this for free — the
+    # browser scopes them to the RP ID (the onion) they were minted on —
+    # but a device key is just a signature, so the onion check is on us:
+    # the Administrator signs in only on the admin onion, everyone else
+    # only on the public one.
+    if (user["id"] == db.get_admin_user_id()) != _is_admin_onion(request):
+        return _json_error(
+            403,
+            "The Administrator signs in on the admin onion only"
+            if user["id"] == db.get_admin_user_id() else
+            "This address is the Administrator login. "
+            "Use the public portal to sign in.",
+        )
     token = db.create_auth_session(user["id"])
     response = web.json_response({"token": token, **_user_json(user, host, db)})
     _set_session(response, token)
@@ -501,6 +576,51 @@ async def me(request: web.Request) -> web.Response:
     return web.json_response(
         _user_json(user, request.app["host"], request.app["db"])
     )
+
+
+# ---------------------------------------------------------------------------
+# Administrator setup. Exactly one Administrator per host: the operator who
+# claims the node through its dedicated admin onion (docs/concepts.md). Only
+# the *begin* endpoints are admin-specific — they gate access and stamp the
+# ceremony, then the ordinary register/complete handlers finish the job.
+# ---------------------------------------------------------------------------
+
+def _admin_setup_gate(request: web.Request) -> Optional[web.Response]:
+    """Admin setup is reachable only through the admin onion, and only
+    while the node has no Administrator yet."""
+    db: Database = request.app["db"]
+    if not _is_admin_onion(request):
+        return _json_error(
+            403, "Administrator setup happens on the admin onion only"
+        )
+    if db.get_admin_user_id() is not None:
+        return _json_error(409, "This node already has an Administrator")
+    return None
+
+
+async def admin_status(request: web.Request) -> web.Response:
+    """Unauthenticated probe the client uses on boot to pick a screen:
+    admin onion + no admin yet -> first-run setup; admin onion + admin
+    exists -> login only; public onion -> the ordinary portal."""
+    db: Database = request.app["db"]
+    return web.json_response({
+        "is_admin_onion": _is_admin_onion(request),
+        "admin_exists": db.get_admin_user_id() is not None,
+    })
+
+
+async def admin_setup_webauthn_begin(request: web.Request) -> web.Response:
+    gate = _admin_setup_gate(request)
+    if gate is not None:
+        return gate
+    return await _registration_options(request, admin=True)
+
+
+async def admin_setup_devicekey_begin(request: web.Request) -> web.Response:
+    gate = _admin_setup_gate(request)
+    if gate is not None:
+        return gate
+    return await _device_registration_challenge(request, admin=True)
 
 
 # ---------------------------------------------------------------------------

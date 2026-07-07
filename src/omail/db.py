@@ -198,6 +198,22 @@ class Database:
         )
         self.conn.commit()
 
+    # -- administrator ------------------------------------------------------
+    # Exactly one Administrator per host: the operator who set up the node
+    # via its dedicated admin onion (see host.admin_onion_address). Stored
+    # as plain config, not a users column, since there's only ever one.
+
+    def get_admin_user_id(self) -> Optional[int]:
+        value = self.get_config("admin_user_id")
+        return int(value) if value is not None else None
+
+    def set_admin_user_id(self, user_id: int) -> None:
+        self.set_config("admin_user_id", str(user_id))
+
+    def get_admin_user(self) -> Optional[sqlite3.Row]:
+        user_id = self.get_admin_user_id()
+        return self.get_user(user_id) if user_id is not None else None
+
     # -- users ------------------------------------------------------------
 
     def create_user(

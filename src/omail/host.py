@@ -30,10 +30,13 @@ from omail.db import Database
 from omail.key_pair import KeyPair
 from omail.upa import derive_upa, onion_address
 
-# The auto-provisioned first contact. Named "Administrator" because it is
-# the operator of this node: tenants are expected to be temporary and
-# eventually migrate to hosts of their own.
-HOST_CONTACT_NAME = "Administrator"
+# The auto-provisioned first contact: a deterministic echo responder every
+# tenant can use to confirm their encryption pipeline works end-to-end
+# before they have any real contacts. Deliberately NOT named "Administrator"
+# — that name now belongs to the real, logged-in operator role (see
+# admin_onion_address below and server.py's /api/admin/setup/*); this is
+# just a diagnostic bot, not a person to talk to.
+HOST_CONTACT_NAME = "Echo Test"
 
 
 def _b64(data: bytes) -> str:
@@ -42,6 +45,27 @@ def _b64(data: bytes) -> str:
 
 def _unb64(data: str) -> bytes:
     return base64.b64decode(data)
+
+
+# The config key holding the administrator's onion identity. Predates the
+# admin role: originally an unlisted "private operator" backup door to the
+# same portal; repurposed as the ONE Administrator's dedicated login
+# surface, kept under its original key so any already-provisioned address
+# survives upgrades unchanged.
+ADMIN_ONION_KEY_CONFIG = "private_onion_key"
+
+
+def admin_onion_address(db: Database) -> Optional[str]:
+    """The Administrator's onion address, derived from its persisted key —
+    or None if it hasn't been provisioned yet (e.g. --no-tor, or --no-
+    admin-onion). Needs no Tor connection: this only reads the key the CLI
+    already generated and persisted, so the aiohttp server can compare it
+    against an incoming request's Host header without touching stem."""
+    pem = db.get_config(ADMIN_ONION_KEY_CONFIG)
+    if not pem:
+        return None
+    priv = serialization.load_pem_private_key(pem.encode(), password=None)
+    return onion_address(priv.public_key())
 
 
 class HostNode:
@@ -97,6 +121,7 @@ class HostNode:
         return derive_upa(self.onion, identity_pub)
 
     # -- prekey bundles -------------------------------------------------------
+
 
     def publish_prekey_bundle(self, kem_alg: str = ML_KEM_768_NAME) -> dict:
         """Mints a one-time prekey bundle a client can initiate against."""
@@ -157,8 +182,9 @@ class HostNode:
     # -- host auto-replies ---------------------------------------------------
 
     def compose_reply(self, plaintext: bytes) -> bytes:
-        """The Administrator contact persona: a tiny deterministic responder
-        that proves live bidirectional ratchet traffic."""
+        """The Echo Test persona: a tiny deterministic responder that proves
+        live bidirectional ratchet traffic. It's a diagnostic bot, not the
+        node's real operator — see admin_onion_address for that."""
         text = plaintext.decode("utf-8", errors="replace").strip()
         now = datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%d %H:%M:%S UTC"
@@ -167,12 +193,14 @@ class HostNode:
             reply = "pong"
         elif text.lower() in {"hello", "hi", "hey"}:
             reply = (
-                f"Hello! This is {self.host_name}, your administrator. "
-                "Every byte of this conversation is Triple Ratchet encrypted."
+                f"Hello! This is {self.host_name}'s echo test. "
+                "Every byte of this conversation is Triple Ratchet encrypted — "
+                "I just mirror it back so you can confirm that before you "
+                "message anyone real."
             )
         elif text.lower() == "help":
             reply = (
-                "Administrator commands: 'ping' (liveness), 'hello' (greeting), "
+                "Echo Test commands: 'ping' (liveness), 'hello' (greeting), "
                 "'help' (this text). Anything else is acknowledged and "
                 "counter-signed with a receipt timestamp."
             )
@@ -181,7 +209,7 @@ class HostNode:
         return reply.encode("utf-8")
 
     def bootstrap_contact(self, user_id: int) -> int:
-        """Auto-provisions the default 'Administrator' contact for a new user."""
+        """Auto-provisions the default 'Echo Test' contact for a new user."""
         return self.db.add_contact(
             user_id, HOST_CONTACT_NAME, self.upa, is_host=True
         )

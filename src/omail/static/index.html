@@ -7,7 +7,7 @@
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body data-host-name="{{HOST_NAME}}" data-host-onion="{{HOST_ONION}}">
+<body data-host-name="{{HOST_NAME}}" data-host-onion="{{HOST_ONION}}" data-is-admin-onion="{{IS_ADMIN_ONION}}">
 
   <div id="bookmark-banner" class="banner hidden">
     <span>
@@ -57,6 +57,39 @@
         <li><strong>Zero knowledge:</strong> your keys are encrypted with a secret that never leaves your authenticator (WebAuthn PRF).</li>
         <li><strong>Post-quantum:</strong> every ratchet epoch mixes an ML-KEM-768 secret.</li>
         <li><strong>Sovereign:</strong> migrate to your own onion service whenever you choose.</li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- ============ ADMIN VIEW (only ever served on the admin onion) ============ -->
+  <main id="admin-auth-view" class="hidden">
+    <section class="hero">
+      <h1>Administrator access.</h1>
+      <p id="admin-setup-intro">
+        This is the <strong>private door</strong> to this OMail node — separate
+        from the public address your contacts use. Nobody has claimed it yet:
+        the first credential created here becomes the node's one and only
+        Administrator. Set up a passkey (or a device key if your browser
+        can't), then <strong>bookmark this page</strong> — this address is
+        never shown anywhere else.
+      </p>
+      <p id="admin-login-intro" class="hidden">
+        This node already has its Administrator. Sign in with the credential
+        you created here — no other credential works on this address.
+      </p>
+      <div class="cta hidden" id="admin-setup-cta">
+        <button id="btn-admin-setup-passkey" class="primary">Set up with a passkey</button>
+        <button id="btn-admin-setup-devicekey">Set up with a device key</button>
+      </div>
+      <div class="cta hidden" id="admin-login-cta">
+        <button id="btn-admin-login" class="primary">Sign in with your passkey</button>
+        <button id="btn-admin-login-device">Sign in with this browser's device key</button>
+      </div>
+      <p id="admin-auth-status" class="status"></p>
+      <ul class="tenets">
+        <li><strong>Never share this address.</strong> Contacts and guests use the public onion; this one is yours alone.</li>
+        <li><strong>Zero knowledge:</strong> your keys are encrypted client-side; the node stores only ciphertext.</li>
+        <li><strong>One Administrator, ever:</strong> once claimed, this screen never appears again.</li>
       </ul>
     </section>
   </main>
@@ -116,6 +149,14 @@
 
   <!-- ============ MAILBOX ============ -->
   <main id="mailbox-view" class="hidden">
+    <nav id="admin-nav" class="hidden">
+      <button data-tab="inbox">Inbox</button>
+      <button data-tab="sent">Sent</button>
+      <button data-tab="drafts">Drafts</button>
+      <button data-tab="contacts">Contacts</button>
+      <button id="admin-add-contact" title="Add a contact — share a QR code or link">✚</button>
+    </nav>
+    <div id="mailbox-body">
     <aside id="sidebar">
       <div class="me">
         <div class="me-handle" id="me-handle"></div>
@@ -142,11 +183,18 @@
         <span id="thread-sub" class="subtle"></span></div>
       <div id="messages"></div>
       <form id="compose" class="hidden">
-        <input id="compose-input" placeholder="Write an encrypted message… (try 'ping' to the Administrator)"
+        <input id="compose-input" placeholder="Write an encrypted message… (try 'ping' to Echo Test)"
                autocomplete="off">
         <button type="submit" class="primary">Send</button>
       </form>
     </section>
+
+    <section id="admin-pane" class="hidden">
+      <div id="admin-pane-head"><h3 id="admin-pane-title">Inbox</h3>
+        <span id="admin-pane-sub" class="subtle"></span></div>
+      <ul id="admin-list"></ul>
+    </section>
+    </div><!-- /mailbox-body -->
   </main>
 
   <!-- ============ MODALS ============ -->
